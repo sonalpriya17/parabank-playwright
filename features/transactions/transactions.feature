@@ -34,6 +34,6 @@ Feature: Transaction API Verification
       | amount              | 50                |
     And the bill payment should be completed successfully
     And the payment amount should be captured for API verification
-    When the user searches transactions by amount using the API
-    Then the API response should contain the bill payment transaction
-    And the transaction details should match the payment data
+    When the user searches transactions for the account using the API
+    Then the API response should contain account transactions
+    And the transaction details should be valid

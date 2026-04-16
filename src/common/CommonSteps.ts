@@ -6,7 +6,7 @@ import { Constants } from './Constants';
 const { Given } = createBdd(test);
 
 Given('the ParaBank application is open', async ({ page }) => {
-  await page.goto(`${Constants.BASE_URL}${Constants.PATHS.HOME}`, {
+  await page.goto(Constants.PATHS.HOME, {
     waitUntil: 'domcontentloaded',
   });
   await expect(page).toHaveTitle(/ParaBank/);

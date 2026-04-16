@@ -14,8 +14,7 @@ Then('the new account should be created successfully', async ({ openAccountPage,
   expect(accountNumber).toBeTruthy();
   session.accountNumber = accountNumber.trim();
 
-  const isCreated = await openAccountPage.isAccountCreated();
-  expect(isCreated).toBeTruthy();
+  await expect(openAccountPage.successHeading).toBeVisible({ timeout: 10_000 });
   console.log(`[Account] Created successfully: ${session.accountNumber}`);
 });
 
@@ -30,11 +29,8 @@ When('the user navigates to the Accounts Overview page', async ({ accountsOvervi
 });
 
 Then('the accounts overview should display balance details', async ({ accountsOverviewPage }) => {
-  const title = await accountsOverviewPage.getPageTitle();
-  expect(title).toContain(ResponseMessages.LOGIN.WELCOME);
-
-  const isTableVisible = await accountsOverviewPage.isAccountsTableVisible();
-  expect(isTableVisible).toBeTruthy();
+  await expect(accountsOverviewPage.pageTitle).toContainText(ResponseMessages.LOGIN.WELCOME);
+  await expect(accountsOverviewPage.accountsTable).toBeVisible();
 
   const totalBalance = await accountsOverviewPage.getTotalBalance();
   expect(totalBalance).toBeTruthy();
@@ -43,6 +39,5 @@ Then('the accounts overview should display balance details', async ({ accountsOv
 
 Then('the new savings account should be listed', async ({ accountsOverviewPage, session }) => {
   expect(session.accountNumber).toBeDefined();
-  const isPresent = await accountsOverviewPage.isAccountPresent(session.accountNumber!);
-  expect(isPresent).toBeTruthy();
+  await expect(accountsOverviewPage.accountLink(session.accountNumber!)).toBeVisible();
 });

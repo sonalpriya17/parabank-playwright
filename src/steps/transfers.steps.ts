@@ -31,9 +31,6 @@ When(
 );
 
 Then('the transfer should be completed successfully', async ({ transferFundsPage }) => {
-  const isSuccess = await transferFundsPage.isTransferSuccessful();
-  expect(isSuccess).toBeTruthy();
-
-  const message = await transferFundsPage.getSuccessMessage();
-  expect(message).toContain(ResponseMessages.TRANSFER.SUCCESS);
+  await expect(transferFundsPage.successHeading).toBeVisible({ timeout: 10_000 });
+  await expect(transferFundsPage.successHeading).toContainText(ResponseMessages.TRANSFER.SUCCESS);
 });

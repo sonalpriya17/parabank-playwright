@@ -16,9 +16,6 @@ When('the user logs in with the registered credentials', async ({ loginPage, ses
 });
 
 Then('the user should see the Accounts Overview page', async ({ loginPage }) => {
-  const isSuccess = await loginPage.isLoginSuccessful();
-  expect(isSuccess).toBeTruthy();
-
-  const heading = await loginPage.getPageHeading();
-  expect(heading).toContain(ResponseMessages.LOGIN.WELCOME);
+  await expect(loginPage.accountsOverviewHeading).toBeVisible({ timeout: 10_000 });
+  await expect(loginPage.accountsOverviewHeading).toContainText(ResponseMessages.LOGIN.WELCOME);
 });

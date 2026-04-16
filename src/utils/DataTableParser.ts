@@ -1,10 +1,7 @@
 import { UserFactory } from '../data/factories/UserFactory';
 import { UserData, SessionData } from '../data/types';
 
-interface DataTableRow {
-  PARAM: string;
-  VALUE: string;
-}
+export type DataTableRow = Record<string, string>;
 
 export class DataTableParser {
   static parseUserData(
@@ -15,6 +12,9 @@ export class DataTableParser {
     const overrides: Record<string, string> = {};
 
     for (const row of rows) {
+      if (row.VALUE === '<generated>') {
+        continue;
+      }
       const value = DataTableParser.resolveValue(
         row.VALUE,
         session,
