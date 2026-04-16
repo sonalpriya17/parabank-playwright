@@ -1,5 +1,5 @@
 import { test as base } from 'playwright-bdd';
-import { v4 as uuidv4 } from 'uuid';
+import { faker } from '@faker-js/faker';
 import { RegisterPage } from '../pages/RegisterPage';
 import { LoginPage } from '../pages/LoginPage';
 import { HomePage } from '../pages/HomePage';
@@ -57,7 +57,7 @@ export const test = base.extend<Fixtures>({
 
   session: async ({}, use) => {
     const session: SessionData = {
-      sessionKey: uuidv4(),
+      sessionKey: faker.string.alphanumeric(8),
     };
     await use(session);
   },

@@ -31,13 +31,11 @@ export class DataTableParser {
     session: SessionData
   ): Record<string, string> {
     const result: Record<string, string> = {};
-    const generated = UserFactory.create(session.sessionKey);
 
     for (const row of rows) {
       result[row.PARAM] = DataTableParser.resolveValue(
         row.VALUE,
-        session,
-        generated
+        session
       );
     }
 
@@ -47,7 +45,7 @@ export class DataTableParser {
   private static resolveValue(
     value: string,
     session: SessionData,
-    generated: UserData
+    _generated?: UserData
   ): string {
     if (value === '<generated>') {
       return '';
