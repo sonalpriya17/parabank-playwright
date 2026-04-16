@@ -73,12 +73,12 @@ jobs:
         with:
           server_address: smtp.gmail.com
           server_port: 587
-          username: ${{ secrets.MAIL_USERNAME }}
+          username: sonalpriya172@gmail.com
           password: ${{ secrets.MAIL_PASSWORD }}
           subject: |
             ParaBank E2E Tests - ${{ steps.test-run.outcome == 'success' && 'PASSED' || 'FAILED' }} - ${{ github.ref_name }}
-          to: ${{ secrets.MAIL_TO }}
-          from: ${{ secrets.MAIL_USERNAME }}
+          to: sonalpriya172@gmail.com,sonalpriya17021993@gmail.com,mistlavender678@gmail.com
+          from: sonalpriya172@gmail.com
           body: |
             ParaBank E2E Test Execution Report
             ===================================
