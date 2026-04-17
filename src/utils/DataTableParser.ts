@@ -26,13 +26,19 @@ export class DataTableParser {
     rows: DataTableRow[],
     session: SessionData
   ): BillPayeeData {
-    const result: Record<string, string> = {};
+    const data = DataTableParser.parseKeyValuePairs(rows, session);
 
-    for (const row of rows) {
-      result[row.PARAM] = DataTableParser.resolveValue(row.VALUE, session);
-    }
-
-    return result as unknown as BillPayeeData;
+    return {
+      name: data.name,
+      address: data.address,
+      city: data.city,
+      state: data.state,
+      zipCode: data.zipCode,
+      phone: data.phone,
+      accountNumber: data.accountNumber,
+      verifyAccountNumber: data.verifyAccountNumber,
+      amount: data.amount,
+    };
   }
 
   static parseKeyValuePairs(

@@ -1,5 +1,6 @@
 import { faker } from '@faker-js/faker';
 import { UserData } from '../types';
+import { Constants } from '../../common/Constants';
 
 export const UserFactory = {
   create(sessionKey?: string): UserData {
@@ -7,7 +8,7 @@ export const UserFactory = {
       ? `user_${sessionKey.slice(0, 8)}`
       : `user_${faker.string.alphanumeric(8)}`;
 
-    const password = 'Test@1234';
+    const password = Constants.DEFAULT_PASSWORD;
 
     return {
       firstName: faker.person.firstName(),

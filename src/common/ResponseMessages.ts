@@ -21,17 +21,4 @@ export const ResponseMessages = {
     SUCCESS: 'Bill Payment Complete',
     SUCCESS_TEXT: 'Bill Payment to',
   },
-
-  NAVIGATION: {
-    LINKS: [
-      'Open New Account',
-      'Accounts Overview',
-      'Transfer Funds',
-      'Bill Pay',
-      'Find Transactions',
-      'Update Contact Info',
-      'Request Loan',
-      'Log Out',
-    ],
-  },
 } as const;

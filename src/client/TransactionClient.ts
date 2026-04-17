@@ -10,59 +10,37 @@ export class TransactionClient {
     accountId: string,
     amount: string
   ): Promise<TransactionResponse[]> {
-    const url = `${Constants.API_BASE_URL}/accounts/${accountId}/transactions/amount/${amount}`;
-    const response = await this.request.get(url, {
-      headers: {
-        Accept: 'application/json',
-      },
-    });
-
-    await ApiLogger.log('GET', url, null, response);
-
-    if (!response.ok()) {
-      throw new Error(
-        `API call failed with status ${response.status()}: ${await response.text()}`
-      );
-    }
-
-    return (await response.json()) as TransactionResponse[];
+    return this.get<TransactionResponse[]>(
+      `/accounts/${accountId}/transactions/amount/${amount}`
+    );
   }
 
   async findAll(accountId: string): Promise<TransactionResponse[]> {
-    const url = `${Constants.API_BASE_URL}/accounts/${accountId}/transactions`;
-    const response = await this.request.get(url, {
-      headers: {
-        Accept: 'application/json',
-      },
-    });
-
-    await ApiLogger.log('GET', url, null, response);
-
-    if (!response.ok()) {
-      throw new Error(
-        `API call failed with status ${response.status()}: ${await response.text()}`
-      );
-    }
-
-    return (await response.json()) as TransactionResponse[];
+    return this.get<TransactionResponse[]>(
+      `/accounts/${accountId}/transactions`
+    );
   }
 
   async findById(transactionId: number): Promise<TransactionResponse> {
-    const url = `${Constants.API_BASE_URL}/transactions/${transactionId}`;
+    return this.get<TransactionResponse>(
+      `/transactions/${transactionId}`
+    );
+  }
+
+  private async get<T>(path: string): Promise<T> {
+    const url = `${Constants.API_BASE_URL}${path}`;
     const response = await this.request.get(url, {
-      headers: {
-        Accept: 'application/json',
-      },
+      headers: { Accept: 'application/json' },
     });
 
     await ApiLogger.log('GET', url, null, response);
 
     if (!response.ok()) {
       throw new Error(
-        `API call failed with status ${response.status()}: ${await response.text()}`
+        `GET ${path} failed: ${response.status()} ${await response.text()}`
       );
     }
 
-    return (await response.json()) as TransactionResponse;
+    return response.json() as Promise<T>;
   }
 }

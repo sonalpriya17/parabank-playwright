@@ -55,6 +55,7 @@ export const test = base.extend<Fixtures>({
     await use(new TransactionClient(request));
   },
 
+  // eslint-disable-next-line no-empty-pattern
   session: async ({}, use) => {
     const session: SessionData = {
       sessionKey: faker.string.alphanumeric(8),

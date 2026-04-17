@@ -18,7 +18,6 @@ export interface SessionData {
   sessionKey: string;
   user?: UserData;
   accountNumber?: string;
-  initialBalance?: string;
   lastPaymentAmount?: string;
   capturedTransactions?: TransactionResponse[];
 }
