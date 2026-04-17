@@ -44,9 +44,7 @@ jobs:
         run: npx bddgen
 
       - name: Run Playwright tests
-        run: |
-          mkdir -p test-results
-          npx playwright test 2>&1 | tee test-results/playwright-output.txt
+        run: npx playwright test 2>&1 | tee playwright-output.txt
         continue-on-error: true
         id: test-run
 
@@ -54,7 +52,7 @@ jobs:
         if: always()
         id: test-summary
         run: |
-          OUTPUT_FILE="test-results/playwright-output.txt"
+          OUTPUT_FILE="playwright-output.txt"
           if [ -f "$OUTPUT_FILE" ]; then
             # Playwright prints counts on separate lines when there are failures/flaky:
             #   1 failed

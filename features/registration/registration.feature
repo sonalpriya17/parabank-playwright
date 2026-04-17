@@ -17,6 +17,6 @@ Feature: User Registration
       | phone           | <generated>       |
       | ssn             | <generated>       |
       | username        | user_<sessionKey> |
-      | password        | Test@1234         |
-      | confirmPassword | Test@1234         |
+      | password        | <defaultPassword> |
+      | confirmPassword | <defaultPassword> |
     Then the registration confirmation is displayed

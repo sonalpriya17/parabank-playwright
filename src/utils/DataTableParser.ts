@@ -1,5 +1,6 @@
 import { UserFactory } from '../data/factories/UserFactory';
 import { UserData, SessionData, BillPayeeData } from '../data/types';
+import { Constants } from '../common/Constants';
 
 export type DataTableRow = Record<string, string>;
 
@@ -68,6 +69,10 @@ export class DataTableParser {
 
     if (value.includes('<accountNumber>')) {
       return value.replace('<accountNumber>', session.accountNumber || '');
+    }
+
+    if (value.includes('<defaultPassword>')) {
+      return value.replace('<defaultPassword>', Constants.DEFAULT_PASSWORD);
     }
 
     if (value.includes('<lastPaymentAmount>')) {
