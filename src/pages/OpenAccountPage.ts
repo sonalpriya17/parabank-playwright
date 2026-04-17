@@ -17,7 +17,7 @@ export class OpenAccountPage extends BasePage {
     await this.accountTypeSelect.waitFor({ state: 'visible' });
     await this.accountTypeSelect.selectOption({ value: '1' });
     await this.fromAccountSelect.waitFor({ state: 'visible' });
-    await this.page.waitForTimeout(1000);
+    await this.fromAccountSelect.locator('option').first().waitFor({ state: 'attached' });
     await this.openAccountButton.click();
     await this.newAccountNumber.waitFor({ state: 'visible', timeout: 15_000 });
     const accountNumber = await this.newAccountNumber.textContent();

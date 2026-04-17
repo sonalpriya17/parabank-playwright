@@ -3,6 +3,7 @@ import { createBdd, DataTable } from 'playwright-bdd';
 import { test } from '../fixtures';
 import { DataTableParser } from '../utils/DataTableParser';
 import { ResponseMessages } from '../common/ResponseMessages';
+import { TestLogger } from '../utils/TestLogger';
 
 const { Given, When, Then } = createBdd(test);
 
@@ -15,7 +16,7 @@ When(
   async ({ registerPage, session }, dataTable: DataTable) => {
     const user = DataTableParser.parseUserData(dataTable.hashes(), session);
     session.user = user;
-    console.log(`[Registration] Username: ${user.username}`);
+    TestLogger.log('Registration', `Username: ${user.username}`);
     await registerPage.register(user);
   }
 );

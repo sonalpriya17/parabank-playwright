@@ -44,9 +44,71 @@ jobs:
         run: npx bddgen
 
       - name: Run Playwright tests
-        run: npx playwright test
+        run: |
+          mkdir -p test-results
+          npx playwright test 2>&1 | tee test-results/playwright-output.txt
         continue-on-error: true
         id: test-run
+
+      - name: Parse test results
+        if: always()
+        id: test-summary
+        run: |
+          OUTPUT_FILE="test-results/playwright-output.txt"
+          if [ -f "$OUTPUT_FILE" ]; then
+            # Playwright prints counts on separate lines when there are failures/flaky:
+            #   1 failed
+            #   2 flaky
+            #   4 passed (1.4m)
+            # Or on a single line when all pass: "7 passed (30s)"
+            # Grep all summary lines, then extract each count independently
+            SUMMARY_BLOCK=$(grep -E '^\s*[0-9]+ (passed|failed|flaky)' "$OUTPUT_FILE")
+
+            PASSED=$(echo "$SUMMARY_BLOCK" | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' || echo "0")
+            FAILED=$(echo "$SUMMARY_BLOCK" | grep -oE '[0-9]+ failed' | grep -oE '[0-9]+' || echo "0")
+            FLAKY=$(echo "$SUMMARY_BLOCK" | grep -oE '[0-9]+ flaky' | grep -oE '[0-9]+' || echo "0")
+
+            PASSED=${PASSED:-0}
+            FAILED=${FAILED:-0}
+            FLAKY=${FLAKY:-0}
+
+            TOTAL=$((PASSED + FAILED + FLAKY))
+
+            # Collect failed test names from Playwright output
+            FAILED_TESTS=""
+            if [ "$FAILED" -gt 0 ]; then
+              FAILED_TESTS=$(grep -E '^\s+[0-9]+\)' "$OUTPUT_FILE" | sed 's/^[[:space:]]*//' | head -10)
+              if [ -z "$FAILED_TESTS" ]; then
+                FAILED_TESTS=$(grep -E '✘|FAIL' "$OUTPUT_FILE" | head -10)
+              fi
+            fi
+
+            # Build flaky/retry summary
+            FLAKY_SUMMARY=""
+            if [ "$FLAKY" -gt 0 ]; then
+              FLAKY_SUMMARY="$FLAKY test(s) passed on retry (flaky)"
+            else
+              FLAKY_SUMMARY="No tests required retries. All tests passed on first attempt."
+            fi
+          else
+            TOTAL=0
+            PASSED=0
+            FAILED=0
+            FLAKY=0
+            FAILED_TESTS="Test output not found"
+            FLAKY_SUMMARY="Unable to determine — test output missing."
+          fi
+
+          echo "total=$TOTAL" >> $GITHUB_OUTPUT
+          echo "passed=$PASSED" >> $GITHUB_OUTPUT
+          echo "failed=$FAILED" >> $GITHUB_OUTPUT
+          echo "flaky=$FLAKY" >> $GITHUB_OUTPUT
+          echo "flaky_summary=$FLAKY_SUMMARY" >> $GITHUB_OUTPUT
+
+          # Use delimiter for multiline output
+          echo "failed_tests<<EOF" >> $GITHUB_OUTPUT
+          echo "$FAILED_TESTS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Generate GitHub Actions test summary
         if: always()
@@ -59,11 +121,20 @@ jobs:
             echo "❌ **Some tests failed**" >> $GITHUB_STEP_SUMMARY
           fi
           echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Total Tests | ${{ steps.test-summary.outputs.total }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ✅ Passed | ${{ steps.test-summary.outputs.passed }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ❌ Failed | ${{ steps.test-summary.outputs.failed }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔄 Flaky (passed on retry) | ${{ steps.test-summary.outputs.flaky }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Detail | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| Branch | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Triggered by | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Retry Summary:** ${{ steps.test-summary.outputs.flaky_summary }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "📊 [View Full Report](${{ env.REPORT_URL }})" >> $GITHUB_STEP_SUMMARY
 
@@ -110,15 +181,40 @@ jobs:
           html_body: |
             <h2>ParaBank E2E Test Execution Report</h2>
             <hr/>
-            <table>
-              <tr><td><b>Repository</b></td><td>${{ github.repository }}</td></tr>
-              <tr><td><b>Branch</b></td><td>${{ github.ref_name }}</td></tr>
-              <tr><td><b>Commit</b></td><td>${{ github.sha }}</td></tr>
-              <tr><td><b>Triggered by</b></td><td>${{ github.actor }}</td></tr>
-              <tr><td><b>Test Result</b></td><td>${{ steps.test-run.outcome == 'success' && '✅ ALL TESTS PASSED' || '❌ SOME TESTS FAILED' }}</td></tr>
+            <table style="border-collapse: collapse; width: 100%; max-width: 600px;">
+              <tr><td style="padding: 8px; border: 1px solid #ddd;"><b>Repository</b></td><td style="padding: 8px; border: 1px solid #ddd;">${{ github.repository }}</td></tr>
+              <tr><td style="padding: 8px; border: 1px solid #ddd;"><b>Branch</b></td><td style="padding: 8px; border: 1px solid #ddd;">${{ github.ref_name }}</td></tr>
+              <tr><td style="padding: 8px; border: 1px solid #ddd;"><b>Commit</b></td><td style="padding: 8px; border: 1px solid #ddd;">${{ github.sha }}</td></tr>
+              <tr><td style="padding: 8px; border: 1px solid #ddd;"><b>Triggered by</b></td><td style="padding: 8px; border: 1px solid #ddd;">${{ github.actor }}</td></tr>
+              <tr><td style="padding: 8px; border: 1px solid #ddd;"><b>Test Result</b></td><td style="padding: 8px; border: 1px solid #ddd;">${{ steps.test-run.outcome == 'success' && '✅ ALL TESTS PASSED' || '❌ SOME TESTS FAILED' }}</td></tr>
             </table>
+
+            <h3>Test Summary</h3>
+            <table style="border-collapse: collapse; width: 100%; max-width: 400px;">
+              <tr style="background-color: #f2f2f2;">
+                <th style="padding: 8px; border: 1px solid #ddd; text-align: left;">Metric</th>
+                <th style="padding: 8px; border: 1px solid #ddd; text-align: left;">Count</th>
+              </tr>
+              <tr><td style="padding: 8px; border: 1px solid #ddd;">Total Tests Executed</td><td style="padding: 8px; border: 1px solid #ddd;">${{ steps.test-summary.outputs.total }}</td></tr>
+              <tr><td style="padding: 8px; border: 1px solid #ddd;">✅ Passed</td><td style="padding: 8px; border: 1px solid #ddd;">${{ steps.test-summary.outputs.passed }}</td></tr>
+              <tr><td style="padding: 8px; border: 1px solid #ddd;">❌ Failed</td><td style="padding: 8px; border: 1px solid #ddd;">${{ steps.test-summary.outputs.failed }}</td></tr>
+              <tr><td style="padding: 8px; border: 1px solid #ddd;">🔄 Flaky (passed on retry)</td><td style="padding: 8px; border: 1px solid #ddd;">${{ steps.test-summary.outputs.flaky }}</td></tr>
+            </table>
+
+            <h3>Retry &amp; Flaky Test Summary</h3>
+            <p>${{ steps.test-summary.outputs.flaky_summary }}</p>
+
+            <h3>Failed Tests</h3>
+            <p>${{ steps.test-summary.outputs.failed == '0' && 'No failures — all tests passed.' || steps.test-summary.outputs.failed_tests }}</p>
+            <p><i>Screenshots, videos, and trace logs for failed tests are available in the full report below.</i></p>
+
             <br/>
             <p><b>📊 View Full Report:</b> <a href="${{ env.REPORT_URL }}">Playwright HTML Report</a></p>
             <p><b>🔗 Actions Run:</b> <a href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}">View Pipeline</a></p>
-            <br/>
-            <p><i>Report includes Trace Viewer, screenshots, and videos for failed tests.</i></p>
+            <p><b>📎 Artifacts:</b> <a href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}">Download screenshots, videos &amp; traces</a></p>
+
+      - name: Fail pipeline if tests failed
+        if: steps.test-run.outcome == 'failure'
+        run: |
+          echo "❌ Tests failed — failing the pipeline."
+          exit 1

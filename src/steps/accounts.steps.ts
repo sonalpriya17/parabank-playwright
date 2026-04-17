@@ -2,6 +2,7 @@ import { expect } from '@playwright/test';
 import { createBdd } from 'playwright-bdd';
 import { test } from '../fixtures';
 import { ResponseMessages } from '../common/ResponseMessages';
+import { TestLogger } from '../utils/TestLogger';
 
 const { When, Then } = createBdd(test);
 
@@ -15,13 +16,13 @@ Then('the new account should be created successfully', async ({ openAccountPage,
   session.accountNumber = accountNumber.trim();
 
   await expect(openAccountPage.successHeading).toBeVisible({ timeout: 10_000 });
-  console.log(`[Account] Created successfully: ${session.accountNumber}`);
+  TestLogger.log('Account', `Created successfully: ${session.accountNumber}`);
 });
 
 Then('the account number should be captured', async ({ session }) => {
   expect(session.accountNumber).toBeDefined();
   expect(session.accountNumber).toBeTruthy();
-  console.log(`[Account] Captured account number: ${session.accountNumber}`);
+  TestLogger.log('Account', `Captured account number: ${session.accountNumber}`);
 });
 
 When('the user navigates to the Accounts Overview page', async ({ accountsOverviewPage }) => {
@@ -34,7 +35,7 @@ Then('the accounts overview should display balance details', async ({ accountsOv
 
   const totalBalance = await accountsOverviewPage.getTotalBalance();
   expect(totalBalance).toBeTruthy();
-  console.log(`[Accounts] Total balance: ${totalBalance}`);
+  TestLogger.log('Accounts', `Total balance: ${totalBalance}`);
 });
 
 Then('the new savings account should be listed', async ({ accountsOverviewPage, session }) => {

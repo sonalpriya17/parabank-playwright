@@ -1,3 +1,5 @@
+import { TransactionResponse } from './response/TransactionResponse';
+
 export interface UserData {
   firstName: string;
   lastName: string;
@@ -32,5 +34,3 @@ export interface BillPayeeData {
   verifyAccountNumber: string;
   amount: string;
 }
-
-import { TransactionResponse } from './response/TransactionResponse';

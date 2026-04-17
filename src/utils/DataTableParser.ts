@@ -1,5 +1,5 @@
 import { UserFactory } from '../data/factories/UserFactory';
-import { UserData, SessionData } from '../data/types';
+import { UserData, SessionData, BillPayeeData } from '../data/types';
 
 export type DataTableRow = Record<string, string>;
 
@@ -15,15 +15,24 @@ export class DataTableParser {
       if (row.VALUE === '<generated>') {
         continue;
       }
-      const value = DataTableParser.resolveValue(
-        row.VALUE,
-        session,
-        generated
-      );
+      const value = DataTableParser.resolveValue(row.VALUE, session);
       overrides[row.PARAM] = value;
     }
 
     return { ...generated, ...overrides } as UserData;
+  }
+
+  static parseBillPayData(
+    rows: DataTableRow[],
+    session: SessionData
+  ): BillPayeeData {
+    const result: Record<string, string> = {};
+
+    for (const row of rows) {
+      result[row.PARAM] = DataTableParser.resolveValue(row.VALUE, session);
+    }
+
+    return result as unknown as BillPayeeData;
   }
 
   static parseKeyValuePairs(
@@ -33,10 +42,7 @@ export class DataTableParser {
     const result: Record<string, string> = {};
 
     for (const row of rows) {
-      result[row.PARAM] = DataTableParser.resolveValue(
-        row.VALUE,
-        session
-      );
+      result[row.PARAM] = DataTableParser.resolveValue(row.VALUE, session);
     }
 
     return result;
@@ -44,8 +50,7 @@ export class DataTableParser {
 
   private static resolveValue(
     value: string,
-    session: SessionData,
-    _generated?: UserData
+    session: SessionData
   ): string {
     if (value === '<generated>') {
       return '';

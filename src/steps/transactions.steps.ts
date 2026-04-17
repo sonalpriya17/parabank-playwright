@@ -2,6 +2,7 @@ import { expect } from '@playwright/test';
 import { createBdd } from 'playwright-bdd';
 import { test } from '../fixtures';
 import { TransactionResponse } from '../data/types/response/TransactionResponse';
+import { TestLogger } from '../utils/TestLogger';
 
 const { When, Then } = createBdd(test);
 
@@ -11,21 +12,23 @@ When(
   'the user searches transactions for the account using the API',
   async ({ transactionClient, session }) => {
     expect(session.accountNumber).toBeDefined();
+    expect(session.lastPaymentAmount).toBeDefined();
 
     const accountId = session.accountNumber!;
-    console.log(`[API] Fetching transactions for account ${accountId}`);
+    const amount = session.lastPaymentAmount!;
+    TestLogger.log('API', `Searching transactions by amount $${amount} for account ${accountId}`);
 
     // Retry with delay — ParaBank may need time to persist transactions
     let transactions: TransactionResponse[] = [];
     for (let attempt = 1; attempt <= 3; attempt++) {
       await sleep(1000);
-      transactions = await transactionClient.findAll(accountId);
+      transactions = await transactionClient.findByAmount(accountId, amount);
       if (transactions.length > 0) break;
-      console.log(`[API] Attempt ${attempt}: no transactions yet, retrying...`);
+      TestLogger.log('API', `Attempt ${attempt}: no transactions yet, retrying...`);
     }
 
     session.capturedTransactions = transactions;
-    console.log(`[API] Found ${transactions.length} transaction(s)`);
+    TestLogger.log('API', `Found ${transactions.length} transaction(s) matching amount $${amount}`);
   }
 );
 
@@ -33,9 +36,7 @@ Then('the API response should contain account transactions', async ({ session })
   expect(session.capturedTransactions).toBeDefined();
   expect(session.capturedTransactions!.length).toBeGreaterThan(0);
 
-  console.log(
-    `[API] Transaction IDs: ${session.capturedTransactions!.map((t) => t.id).join(', ')}`
-  );
+  TestLogger.log('API', `Transaction IDs: ${session.capturedTransactions!.map((t) => t.id).join(', ')}`);
 });
 
 Then('the transaction details should be valid', async ({ session }) => {
@@ -50,10 +51,5 @@ Then('the transaction details should be valid', async ({ session }) => {
   expect(transaction.description).toBeTruthy();
   expect(transaction.date).toBeTruthy();
 
-  console.log(`[API] Transaction verified:`);
-  console.log(`  ID: ${transaction.id}`);
-  console.log(`  Amount: $${transaction.amount}`);
-  console.log(`  Type: ${transaction.type}`);
-  console.log(`  Description: ${transaction.description}`);
-  console.log(`  Date: ${transaction.date}`);
+  TestLogger.log('API', `Transaction verified: ID=${transaction.id}, Amount=$${transaction.amount}, Type=${transaction.type}, Description=${transaction.description}`);
 });

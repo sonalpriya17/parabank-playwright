@@ -1,9 +1,9 @@
 import { expect } from '@playwright/test';
 import { createBdd, DataTable } from 'playwright-bdd';
 import { test } from '../fixtures';
-import { BillPayeeData } from '../data/types';
 import { DataTableParser } from '../utils/DataTableParser';
 import { ResponseMessages } from '../common/ResponseMessages';
+import { TestLogger } from '../utils/TestLogger';
 
 const { When, Then } = createBdd(test);
 
@@ -12,11 +12,10 @@ When(
   async ({ billPayPage, session }, dataTable: DataTable) => {
     expect(session.accountNumber).toBeDefined();
 
-    const data = DataTableParser.parseKeyValuePairs(dataTable.hashes(), session);
-    const payee = data as unknown as BillPayeeData;
+    const payee = DataTableParser.parseBillPayData(dataTable.hashes(), session);
 
     session.lastPaymentAmount = payee.amount;
-    console.log(`[BillPay] Paying $${payee.amount} to ${payee.name}`);
+    TestLogger.log('BillPay', `Paying $${payee.amount} to ${payee.name}`);
 
     await billPayPage.navigateToBillPay();
     await billPayPage.payBill(payee, session.accountNumber!);
@@ -30,5 +29,5 @@ Then('the bill payment should be completed successfully', async ({ billPayPage }
 
 Then('the payment amount should be captured for API verification', async ({ session }) => {
   expect(session.lastPaymentAmount).toBeDefined();
-  console.log(`[BillPay] Payment amount captured: $${session.lastPaymentAmount}`);
+  TestLogger.log('BillPay', `Payment amount captured: $${session.lastPaymentAmount}`);
 });

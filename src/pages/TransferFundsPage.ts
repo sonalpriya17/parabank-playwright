@@ -20,7 +20,7 @@ export class TransferFundsPage extends BasePage {
     await this.amountInput.waitFor({ state: 'visible' });
     await this.amountInput.fill(amount);
     await this.fromAccountSelect.selectOption(fromAccount);
-    await this.page.waitForTimeout(500);
+    await this.toAccountSelect.locator('option').first().waitFor({ state: 'attached' });
     await this.toAccountSelect.selectOption(toAccount);
     await this.transferButton.click();
   }

@@ -2,6 +2,7 @@ import { expect } from '@playwright/test';
 import { createBdd } from 'playwright-bdd';
 import { test } from '../fixtures';
 import { ResponseMessages } from '../common/ResponseMessages';
+import { TestLogger } from '../utils/TestLogger';
 
 const { When, Then } = createBdd(test);
 
@@ -12,15 +13,15 @@ When(
     await transferFundsPage.navigateToTransferFunds();
 
     const toOptions = await transferFundsPage.getToAccountOptions();
-    console.log(`[Transfer] Available to-accounts: ${JSON.stringify(toOptions)}`);
-    console.log(`[Transfer] From account (savings): ${session.accountNumber}`);
+    TestLogger.log('Transfer', `Available to-accounts: ${JSON.stringify(toOptions)}`);
+    TestLogger.log('Transfer', `From account (savings): ${session.accountNumber}`);
 
     const toAccount = toOptions
       .map((opt) => opt.trim())
       .find((opt) => opt !== session.accountNumber && opt.length > 0);
 
     expect(toAccount).toBeDefined();
-    console.log(`[Transfer] Transferring $${amount} from ${session.accountNumber} to ${toAccount}`);
+    TestLogger.log('Transfer', `Transferring $${amount} from ${session.accountNumber} to ${toAccount}`);
 
     await transferFundsPage.transferFunds(
       amount,
