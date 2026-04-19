@@ -94,7 +94,8 @@ jobs:
             fi
 
             # CF-specific failure count — uses the [CLOUDFLARE] tagged warning from RegisterPage
-            CF_HITS=$(grep -cE '\[CLOUDFLARE\]' "$OUTPUT_FILE" || echo "0")
+            # grep -c outputs '0' and exits 1 when no matches; '|| true' keeps us at exit 0 without duplicating output
+            CF_HITS=$(grep -cE '\[CLOUDFLARE\]' "$OUTPUT_FILE" || true)
             CF_HITS=${CF_HITS:-0}
           else
             TOTAL=0
