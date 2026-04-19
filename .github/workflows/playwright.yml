@@ -176,9 +176,11 @@ jobs:
           rm -f /tmp/stability.csv
           curl -sLf "https://raw.githubusercontent.com/${{ github.repository }}/ci-stability/test-history.csv" -o /tmp/stability.csv 2>/dev/null || true
           CSV_HEADER_EXPECTED="timestamp,branch,commit_sha,actor,total,passed,failed,flaky,cf_hits,outcome,duration_sec,run_url"
+          # Only render the stability section when real data exists — otherwise stay silent.
           if [ -s /tmp/stability.csv ] && [ "$(head -n 1 /tmp/stability.csv)" = "$CSV_HEADER_EXPECTED" ] && [ "$(wc -l < /tmp/stability.csv)" -gt 1 ]; then
+            STABILITY_URL="${{ github.server_url }}/${{ github.repository }}/blob/ci-stability/STABILITY.md"
             {
-              echo "## 📈 Recent Stability (last runs on main)"
+              echo "## 📈 Recent Stability ([full report](${STABILITY_URL}))"
               echo ""
               echo "| Date | Commit | Pass | Fail | Flake | CF hits | Outcome | Duration |"
               echo "|------|--------|-----:|-----:|------:|--------:|:-------:|---------:|"
@@ -190,8 +192,6 @@ jobs:
                 }
               '
             } >> $GITHUB_STEP_SUMMARY
-          else
-            echo "_Recent stability data will appear after the first main-branch run appends to the \`ci-stability\` branch._" >> $GITHUB_STEP_SUMMARY
           fi
 
       - name: Post test results comment on PR
@@ -212,11 +212,13 @@ jobs:
           rm -f /tmp/pr_stability.csv
           curl -sLf "https://raw.githubusercontent.com/${{ github.repository }}/ci-stability/test-history.csv" -o /tmp/pr_stability.csv 2>/dev/null || true
           CSV_HEADER_EXPECTED="timestamp,branch,commit_sha,actor,total,passed,failed,flaky,cf_hits,outcome,duration_sec,run_url"
+          # Only render the stability section when real data exists — otherwise stay silent.
           STABILITY_SECTION=""
           if [ -s /tmp/pr_stability.csv ] && [ "$(head -n 1 /tmp/pr_stability.csv)" = "$CSV_HEADER_EXPECTED" ] && [ "$(wc -l < /tmp/pr_stability.csv)" -gt 1 ]; then
-            STABILITY_SECTION=$(awk -F, '
+            STABILITY_URL="${{ github.server_url }}/${{ github.repository }}/blob/ci-stability/STABILITY.md"
+            STABILITY_SECTION=$(awk -F, -v url="$STABILITY_URL" '
               BEGIN {
-                print "### 📈 Recent Stability (last runs on main)"
+                printf "### 📈 Recent Stability ([full report](%s))\n", url
                 print ""
                 print "| Date | Commit | Pass | Fail | Flake | CF hits | Outcome | Duration |"
                 print "|------|--------|-----:|-----:|------:|--------:|:-------:|---------:|"
@@ -235,8 +237,6 @@ jobs:
                 for (i = NR; i >= start; i--) if (rows[i]) print rows[i]
               }
             ' /tmp/pr_stability.csv)
-          else
-            STABILITY_SECTION="_Recent stability data will appear after the first main-branch run appends to the \`ci-stability\` branch._"
           fi
 
           # Heredoc without leading whitespace — GitHub markdown treats indented blocks as code
