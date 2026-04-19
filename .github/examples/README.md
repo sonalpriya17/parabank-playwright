@@ -47,10 +47,11 @@ Commit in fabric_assignment
         │
         ▼
 trigger-parabank-e2e.yml
-(uses E2E_TRIGGER_PAT) ──► repository_dispatch (type=upstream-push)
+(uses E2E_TRIGGER_PAT) ──► workflow_dispatch (ref=TARGET_REF, inputs=source_repo/sha/ref)
                                       │
                                       ▼
-                        parabank-playwright workflow fires
+                        parabank-playwright Playwright E2E Tests
+                        fires on the target ref (main or feature branch)
                                       │
                       ┌───────────────┼───────────────┐
                       ▼               ▼               ▼
@@ -59,9 +60,20 @@ trigger-parabank-e2e.yml
               (via UPSTREAM_STATUS_PAT)
 ```
 
+`workflow_dispatch` is used (not `repository_dispatch`) so the trigger can
+target any ref of parabank-playwright, including unmerged feature branches.
+
+## Testing an unmerged parabank-playwright branch from fabric
+
+1. Edit `trigger-parabank-e2e.yml` in fabric_assignment.
+2. Set `env.TARGET_REF` to the branch name (e.g. `refactor/ci-extract-scripts`).
+3. Push any commit — fabric dispatches to that branch; the branch's workflow
+   runs and posts status back to fabric's SHA.
+4. When ready to promote: change `TARGET_REF` back to `main`.
+
 ## Adding more upstream repos later
 
 Drop another trigger file in this directory (e.g. `backend-api-trigger.yml`),
-change `source_repo` in the client payload, and copy it to that repo. The
-`upstream-push` event type is generic — `source_repo` in the payload tells
-the receiver which upstream triggered it.
+adjust the `source_repo` input, and copy it to that repo. The receiver
+discriminates by `source_repo`, so the same parabank workflow handles all
+upstreams.

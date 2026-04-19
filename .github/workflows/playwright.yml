@@ -5,21 +5,37 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # workflow_dispatch fires for:
+  #  - manual triggers from the Actions UI
+  #  - cross-repo triggers from upstream repos (fabric_assignment) via
+  #    benc-uk/workflow-dispatch; works against ANY ref, which lets
+  #    upstream exercise an unmerged branch of this suite.
   workflow_dispatch:
     inputs:
       reason:
         description: 'Why manually triggered (optional)'
         required: false
         default: 'Manual re-run'
-  # Fires when an upstream repo (e.g. sonalpriya17/fabric_assignment) sends
-  # a repository_dispatch event. Payload shape: { source_repo, sha, ref }.
+      source_repo:
+        description: 'Upstream repo (owner/name) — for status-back to upstream SHA'
+        required: false
+      sha:
+        description: 'Upstream commit SHA — for status-back'
+        required: false
+      ref:
+        description: 'Upstream ref name — metadata'
+        required: false
+  # repository_dispatch fires only from the default branch. Kept for
+  # backward compatibility; new integrations should prefer workflow_dispatch
+  # since that works cross-branch.
   repository_dispatch:
     types: [upstream-push]
 
 concurrency:
-  # For upstream dispatches, group per (source_repo, sha) so concurrent
-  # upstream commits don't cancel each other. For everything else, use ref.
-  group: ${{ github.workflow }}-${{ github.event_name == 'repository_dispatch' && format('dispatch-{0}-{1}', github.event.client_payload.source_repo, github.event.client_payload.sha) || github.ref }}
+  # Group by upstream SHA when dispatched (either event type), otherwise by
+  # ref. Prevents concurrent upstream commits from cancelling each other
+  # while still coalescing retries on the same SHA.
+  group: ${{ github.workflow }}-${{ inputs.sha || github.event.client_payload.sha || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -38,11 +54,14 @@ jobs:
 
     steps:
       - name: Post pending status to upstream
-        if: github.event_name == 'repository_dispatch'
+        # Fires for both event shapes — as long as upstream context is present.
+        if: >-
+          github.event_name == 'repository_dispatch'
+          || (github.event_name == 'workflow_dispatch' && inputs.source_repo != '')
         env:
           GH_TOKEN: ${{ secrets.UPSTREAM_STATUS_PAT }}
-          SOURCE_REPO: ${{ github.event.client_payload.source_repo }}
-          SHA: ${{ github.event.client_payload.sha }}
+          SOURCE_REPO: ${{ github.event.client_payload.source_repo || inputs.source_repo }}
+          SHA: ${{ github.event.client_payload.sha || inputs.sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           gh api "repos/$SOURCE_REPO/statuses/$SHA" \
@@ -133,7 +152,7 @@ jobs:
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: playwright-report${{ github.event_name == 'repository_dispatch' && format('-{0}', github.event.client_payload.sha) || '' }}
+          name: playwright-report${{ (github.event.client_payload.sha || inputs.sha) && format('-{0}', github.event.client_payload.sha || inputs.sha) || '' }}
           path: playwright-report/
           retention-days: 14
 
@@ -141,18 +160,26 @@ jobs:
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: test-results${{ github.event_name == 'repository_dispatch' && format('-{0}', github.event.client_payload.sha) || '' }}
+          name: test-results${{ (github.event.client_payload.sha || inputs.sha) && format('-{0}', github.event.client_payload.sha || inputs.sha) || '' }}
           path: test-results/
           retention-days: 7
 
       - name: Deploy report to GitHub Pages
-        if: always() && github.event_name != 'repository_dispatch' && github.ref == 'refs/heads/main' && steps.test-run.outcome != 'skipped'
+        if: >-
+          always()
+          && github.event_name == 'push'
+          && github.ref == 'refs/heads/main'
+          && steps.test-run.outcome != 'skipped'
         uses: actions/upload-pages-artifact@v3
         with:
           path: playwright-report/
 
       - name: Publish to GitHub Pages
-        if: always() && github.event_name != 'repository_dispatch' && github.ref == 'refs/heads/main' && steps.test-run.outcome != 'skipped'
+        if: >-
+          always()
+          && github.event_name == 'push'
+          && github.ref == 'refs/heads/main'
+          && steps.test-run.outcome != 'skipped'
         uses: actions/deploy-pages@v4
         id: deployment
 
@@ -206,11 +233,15 @@ jobs:
             <p><i>Note: the <a href="${{ env.REPORT_URL }}">GitHub Pages URL</a> shows the <b>last main-branch run only</b> — it does not reflect PR runs.</i></p>
 
       - name: Post final status to upstream
-        if: always() && github.event_name == 'repository_dispatch'
+        if: >-
+          always() && (
+            github.event_name == 'repository_dispatch'
+            || (github.event_name == 'workflow_dispatch' && inputs.source_repo != '')
+          )
         env:
           GH_TOKEN: ${{ secrets.UPSTREAM_STATUS_PAT }}
-          SOURCE_REPO: ${{ github.event.client_payload.source_repo }}
-          SHA: ${{ github.event.client_payload.sha }}
+          SOURCE_REPO: ${{ github.event.client_payload.source_repo || inputs.source_repo }}
+          SHA: ${{ github.event.client_payload.sha || inputs.sha }}
           OUTCOME: ${{ steps.test-run.outcome }}
           TOTAL: ${{ steps.test-summary.outputs.total }}
           PASSED: ${{ steps.test-summary.outputs.passed }}
