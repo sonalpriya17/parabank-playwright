@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Why manually triggered (optional)'
+        required: false
+        default: 'Manual re-run'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -14,6 +20,7 @@ permissions:
   contents: write
   pages: write
   id-token: write
+  pull-requests: write
 
 env:
   REPORT_URL: https://sonalpriya17.github.io/parabank-playwright/
@@ -85,23 +92,37 @@ jobs:
               fi
             fi
 
-            # Build flaky/retry summary
+            # Tagged-warning counts from TestLogger.warn — each tag maps to a distinct root cause
+            CF_HITS=$(grep -cE '\[CLOUDFLARE\]' "$OUTPUT_FILE" || true)
+            CF_HITS=${CF_HITS:-0}
+            OTHER_TIMEOUT_HITS=$(grep -cE '\[REGISTER-TIMEOUT\]' "$OUTPUT_FILE" || true)
+            OTHER_TIMEOUT_HITS=${OTHER_TIMEOUT_HITS:-0}
+            DOUBLE_COLLISION_HITS=$(grep -cE '\[COLLISION-DOUBLE\]' "$OUTPUT_FILE" || true)
+            DOUBLE_COLLISION_HITS=${DOUBLE_COLLISION_HITS:-0}
+
+            # Build flaky/retry summary with cause attribution
             FLAKY_SUMMARY=""
             if [ "$FLAKY" -gt 0 ]; then
-              FLAKY_SUMMARY="$FLAKY test(s) passed on retry (flaky)"
+              if [ "$CF_HITS" -gt 0 ]; then
+                FLAKY_SUMMARY="$FLAKY flaky test(s) — $CF_HITS Cloudflare interstitial(s) detected (likely cause)"
+              elif [ "$DOUBLE_COLLISION_HITS" -gt 0 ]; then
+                FLAKY_SUMMARY="$FLAKY flaky test(s) — $DOUBLE_COLLISION_HITS ParaBank false-positive 'username exists' (both original AND regenerated username rejected; likely server bug)"
+              elif [ "$OTHER_TIMEOUT_HITS" -gt 0 ]; then
+                FLAKY_SUMMARY="$FLAKY flaky test(s) — $OTHER_TIMEOUT_HITS non-CF registration timeout(s) detected"
+              else
+                FLAKY_SUMMARY="$FLAKY flaky test(s) — no known cause tagged in log; check trace.zip for root cause"
+              fi
             else
               FLAKY_SUMMARY="No tests required retries. All tests passed on first attempt."
             fi
-
-            # CF-specific failure count — uses the [CLOUDFLARE] tagged warning from RegisterPage
-            # grep -c outputs '0' and exits 1 when no matches; '|| true' keeps us at exit 0 without duplicating output
-            CF_HITS=$(grep -cE '\[CLOUDFLARE\]' "$OUTPUT_FILE" || true)
-            CF_HITS=${CF_HITS:-0}
           else
             TOTAL=0
             PASSED=0
             FAILED=0
             FLAKY=0
+            CF_HITS=0
+            OTHER_TIMEOUT_HITS=0
+            DOUBLE_COLLISION_HITS=0
             FAILED_TESTS="Test output not found"
             FLAKY_SUMMARY="Unable to determine — test output missing."
           fi
@@ -111,6 +132,8 @@ jobs:
           echo "failed=$FAILED" >> $GITHUB_OUTPUT
           echo "flaky=$FLAKY" >> $GITHUB_OUTPUT
           echo "cf_hits=$CF_HITS" >> $GITHUB_OUTPUT
+          echo "other_timeout_hits=$OTHER_TIMEOUT_HITS" >> $GITHUB_OUTPUT
+          echo "double_collision_hits=$DOUBLE_COLLISION_HITS" >> $GITHUB_OUTPUT
           echo "flaky_summary=$FLAKY_SUMMARY" >> $GITHUB_OUTPUT
 
           # Use delimiter for multiline output
@@ -135,7 +158,6 @@ jobs:
           echo "| ✅ Passed | ${{ steps.test-summary.outputs.passed }} |" >> $GITHUB_STEP_SUMMARY
           echo "| ❌ Failed | ${{ steps.test-summary.outputs.failed }} |" >> $GITHUB_STEP_SUMMARY
           echo "| 🔄 Flaky (passed on retry) | ${{ steps.test-summary.outputs.flaky }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| ☁ Cloudflare interstitials hit | ${{ steps.test-summary.outputs.cf_hits }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Detail | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
@@ -146,6 +168,120 @@ jobs:
           echo "**Retry Summary:** ${{ steps.test-summary.outputs.flaky_summary }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "📊 [View Full Report](${{ env.REPORT_URL }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Stability snippet — renders recent-runs table from test-history.csv if present
+          # CSV columns: 1=timestamp 2=branch 3=sha 4=actor 5=total 6=passed 7=failed 8=flaky 9=cf_hits 10=outcome 11=duration 12=url
+          if [ -f test-history.csv ] && [ "$(wc -l < test-history.csv)" -gt 1 ]; then
+            {
+              echo "## 📈 Recent Stability (last runs on main)"
+              echo ""
+              echo "| Date | Commit | Pass | Fail | Flake | CF hits | Outcome | Duration |"
+              echo "|------|--------|-----:|-----:|------:|--------:|:-------:|---------:|"
+              tail -10 test-history.csv | awk -F, '
+                NR>0 && $1 !~ /^timestamp/ {
+                  icon = ($10 == "success") ? "✅" : "❌"
+                  ts = substr($1, 1, 10)
+                  printf "| %s | [`%s`](%s) | %s | %s | %s | %s | %s | %ss |\n", ts, $3, $12, $6, $7, $8, $9, icon, $11
+                }
+              '
+            } >> $GITHUB_STEP_SUMMARY
+          else
+            echo "_Recent stability data will appear after the first main-branch run appends to \`test-history.csv\`._" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Post test results comment on PR
+        if: always() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          STATUS_ICON="✅"
+          STATUS_TEXT="All tests passed"
+          if [ "${{ steps.test-run.outcome }}" != "success" ]; then
+            STATUS_ICON="❌"
+            STATUS_TEXT="Some tests failed"
+          fi
+
+          # Render recent-stability table (empty string if file missing)
+          STABILITY_SECTION=""
+          if [ -f test-history.csv ] && [ "$(wc -l < test-history.csv)" -gt 1 ]; then
+            STABILITY_SECTION=$(awk -F, '
+              BEGIN {
+                print "### 📈 Recent Stability (last runs on main)"
+                print ""
+                print "| Date | Commit | Pass | Fail | Flake | CF hits | Outcome | Duration |"
+                print "|------|--------|-----:|-----:|------:|--------:|:-------:|---------:|"
+              }
+              NR>1 && $1 !~ /^timestamp/ {
+                icon = ($10 == "success") ? "✅" : "❌"
+                ts = substr($1, 1, 10)
+                rows[NR] = sprintf("| %s | [`%s`](%s) | %s | %s | %s | %s | %s | %ss |", ts, $3, $12, $6, $7, $8, $9, icon, $11)
+              }
+              END {
+                # Print last 10 in reverse (newest first)
+                n = 0
+                for (i in rows) n++
+                count = (n > 10) ? 10 : n
+                start = NR - count + 1
+                for (i = NR; i >= start; i--) if (rows[i]) print rows[i]
+              }
+            ' test-history.csv)
+          else
+            STABILITY_SECTION="_Recent stability data will appear after the first main-branch run appends to \`test-history.csv\`._"
+          fi
+
+          # Heredoc without leading whitespace — GitHub markdown treats indented blocks as code
+          BODY=$(cat <<COMMENT
+          ## 🎭 Playwright Test Results
+
+          ${STATUS_ICON} **${STATUS_TEXT}**
+
+          | Metric | Count |
+          |--------|-------|
+          | Total  | ${{ steps.test-summary.outputs.total }} |
+          | ✅ Passed | ${{ steps.test-summary.outputs.passed }} |
+          | ❌ Failed | ${{ steps.test-summary.outputs.failed }} |
+          | 🔄 Flaky (passed on retry) | ${{ steps.test-summary.outputs.flaky }} |
+
+          **Retry Summary:** ${{ steps.test-summary.outputs.flaky_summary }}
+
+          **Commit:** \`${{ github.sha }}\`  ·  **Run:** [#${{ github.run_number }}](${RUN_URL})  ·  **Artifacts:** download from the run page
+
+          ${STABILITY_SECTION}
+
+          <details>
+          <summary>Known flaky causes we tag</summary>
+
+          When a test is flaky, we try to attribute it to one of these known root causes:
+
+          - ☁ **Cloudflare interstitial** — ParaBank's CF bot-challenge page blocked registration
+          - ⏱ **Other registration timeout** — Register response didn't render welcome or error in time (not CF-related)
+          - 🔁 **ParaBank double-collision** — 'username already exists' returned twice for unique UUIDs (server false-positive)
+          - ❓ **Unknown** — None of the above tags fired; download artifact and inspect \`trace.zip\` for root cause
+
+          This run: ☁ ${{ steps.test-summary.outputs.cf_hits }}  ·  ⏱ ${{ steps.test-summary.outputs.other_timeout_hits }}  ·  🔁 ${{ steps.test-summary.outputs.double_collision_hits }}
+          </details>
+
+          _HTML report deploys to [GitHub Pages](${{ env.REPORT_URL }}) only on main-branch runs. For PR runs, download the \`playwright-report\` artifact from the run page._
+          COMMENT
+          )
+
+          # Strip leading whitespace that HEREDOC preserves (YAML indentation)
+          BODY_CLEAN=$(echo "$BODY" | sed 's/^          //')
+
+          # Find any existing bot comment and either update it or create new
+          COMMENT_ID=$(gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
+            --jq '.[] | select(.user.login == "github-actions[bot]") | select(.body | contains("🎭 Playwright Test Results")) | .id' \
+            | head -1)
+
+          if [ -n "$COMMENT_ID" ]; then
+            gh api -X PATCH "repos/${{ github.repository }}/issues/comments/$COMMENT_ID" -f body="$BODY_CLEAN"
+            echo "Updated existing comment $COMMENT_ID"
+          else
+            gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" -f body="$BODY_CLEAN"
+            echo "Created new comment"
+          fi
 
       - name: Append run to test-history.csv
         if: always() && github.ref == 'refs/heads/main' && github.event_name == 'push'
@@ -167,11 +303,71 @@ jobs:
 
           echo "$ROW" >> test-history.csv
 
+          # Regenerate STABILITY.md from full CSV
+          python3 - <<'PY'
+          import csv
+          from collections import Counter
+
+          rows = []
+          try:
+              with open('test-history.csv') as f:
+                  rows = list(csv.DictReader(f))
+          except FileNotFoundError:
+              pass
+
+          if not rows:
+              with open('STABILITY.md', 'w') as f:
+                  f.write('# Suite Stability\n\n_No runs yet._\n')
+              raise SystemExit(0)
+
+          recent = rows[-20:]
+
+          def pct(n, d):
+              return f'{100*n/d:.1f}%' if d else '—'
+
+          def as_int(v, default=0):
+              try:
+                  return int(v)
+              except (TypeError, ValueError):
+                  return default
+
+          recent_pass = sum(1 for r in recent if r['outcome'] == 'success')
+          recent_fail = sum(1 for r in recent if r['outcome'] == 'failure')
+          flake_total = sum(as_int(r.get('flaky', 0)) for r in recent)
+          cf_total = sum(as_int(r.get('cf_hits', 0)) for r in recent)
+          tests_total = sum(as_int(r.get('total', 0)) for r in recent)
+          tests_passed = sum(as_int(r.get('passed', 0)) for r in recent)
+
+          lines = ['# Suite Stability\n']
+          lines.append(f'_Auto-generated from [test-history.csv](test-history.csv) — last {len(recent)} runs on `main`._\n')
+
+          lines.append('## Headline\n')
+          lines.append(f'- **Runs:** {recent_pass} / {len(recent)} succeeded ({pct(recent_pass, len(recent))})')
+          lines.append(f'- **Tests:** {tests_passed} / {tests_total} passed ({pct(tests_passed, tests_total)})')
+          lines.append(f'- **Flakes:** {flake_total} flaky tests across recent runs')
+          lines.append(f'- **Cloudflare interstitials:** {cf_total} total hits\n')
+
+          lines.append('## Recent runs\n')
+          lines.append('| Date | Commit | Pass | Fail | Flake | CF hits | Outcome | Duration |')
+          lines.append('|------|--------|-----:|-----:|------:|--------:|:-------:|---------:|')
+          for r in reversed(recent):
+              ts = (r.get('timestamp') or '')[:10]
+              sha = r.get('commit_sha', '')[:7]
+              run_url = r.get('run_url', '')
+              sha_link = f'[`{sha}`]({run_url})' if run_url else f'`{sha}`'
+              icon = '✅' if r.get('outcome') == 'success' else '❌'
+              lines.append(f"| {ts} | {sha_link} | {r.get('passed','')} | {r.get('failed','')} | {r.get('flaky','')} | {r.get('cf_hits','')} | {icon} | {r.get('duration_sec','')}s |")
+
+          with open('STABILITY.md', 'w') as f:
+              f.write('\n'.join(lines) + '\n')
+          print('STABILITY.md regenerated')
+          PY
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           # Pull latest before committing to reduce race with concurrent main runs
           git pull --rebase origin main || true
-          git add test-history.csv
+          git add test-history.csv STABILITY.md
           git commit -m "ci: append run ${SHORT_SHA} to test-history.csv [skip ci]" || echo "No changes to commit"
           git push origin main || echo "Push failed — likely raced with another run; non-fatal"
 
