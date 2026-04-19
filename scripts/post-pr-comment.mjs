@@ -34,7 +34,7 @@ const body = [
   '',
   `**Retry Summary:** ${env.FLAKY_SUMMARY ?? ''}`,
   '',
-  `**Commit:** \`${env.COMMIT ?? ''}\`  ·  **Run:** [#${env.RUN_NUMBER ?? ''}](${runUrl})  ·  **Artifacts:** download from the run page`,
+  `**Commit:** \`${env.COMMIT ?? ''}\`  ·  **Run:** [#${env.RUN_NUMBER ?? ''}](${runUrl})  ·  **📊 [HTML report for this run](${runUrl}#artifacts)** (download the \`playwright-report\` artifact)`,
   '',
   '<details>',
   '<summary>Known flaky causes we tag</summary>',
@@ -49,7 +49,7 @@ const body = [
   `This run: ☁ ${env.CF_HITS ?? 0}  ·  ⏱ ${env.OTHER_TIMEOUT_HITS ?? 0}  ·  🔁 ${env.DOUBLE_COLLISION_HITS ?? 0}`,
   '</details>',
   '',
-  `_HTML report deploys to [GitHub Pages](${reportUrl}) only on main-branch runs. For PR runs, download the \`playwright-report\` artifact from the run page._`,
+  `_Note: the [GitHub Pages URL](${reportUrl}) shows the **last main-branch run only** — it does **not** reflect this PR. For this PR's actual results, use the artifact link above._`,
 ].join('\n');
 
 const marker = '🎭 Playwright Test Results';

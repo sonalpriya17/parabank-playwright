@@ -191,9 +191,10 @@ jobs:
             <p><i>Screenshots, videos, and trace logs for failed tests are available in the full report below.</i></p>
 
             <br/>
-            <p><b>📊 View Full Report:</b> <a href="${{ env.REPORT_URL }}">Playwright HTML Report</a></p>
+            <p><b>📊 HTML report for this run:</b> download the <code>playwright-report</code> artifact from the <a href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}">run page</a></p>
             <p><b>🔗 Actions Run:</b> <a href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}">View Pipeline</a></p>
             <p><b>📎 Artifacts:</b> <a href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}">Download screenshots, videos &amp; traces</a></p>
+            <p><i>Note: the <a href="${{ env.REPORT_URL }}">GitHub Pages URL</a> shows the <b>last main-branch run only</b> — it does not reflect PR runs.</i></p>
 
       - name: Post final status to upstream
         if: always() && github.event_name == 'repository_dispatch'
