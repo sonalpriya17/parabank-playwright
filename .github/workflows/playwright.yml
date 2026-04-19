@@ -53,6 +53,11 @@ jobs:
 
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # For repository_dispatch events, honor `target_branch` in the
+          # payload so upstream repos can exercise an unmerged branch of
+          # this suite. push/PR events use their own github.ref unchanged.
+          ref: ${{ github.event.client_payload.target_branch || github.ref }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

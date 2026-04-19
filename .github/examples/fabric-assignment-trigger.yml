@@ -32,9 +32,16 @@ jobs:
           event-type: upstream-push
           client-payload: |
             {
-              "source_repo": "${{ github.repository }}",
-              "sha":         "${{ github.event.pull_request.head.sha || github.sha }}",
-              "ref":         "${{ github.event.pull_request.head.ref || github.ref_name }}",
-              "event":       "${{ github.event_name }}",
-              "actor":       "${{ github.actor }}"
+              "source_repo":   "${{ github.repository }}",
+              "sha":           "${{ github.event.pull_request.head.sha || github.sha }}",
+              "ref":           "${{ github.event.pull_request.head.ref || github.ref_name }}",
+              "event":         "${{ github.event_name }}",
+              "actor":         "${{ github.actor }}",
+              "target_branch": "main"
             }
+
+      # The `target_branch` field tells parabank-playwright which ref of
+      # its own repo to check out and run. Default to "main" so fabric
+      # exercises the merged suite. Override to a feature branch name
+      # (e.g. "refactor/ci-extract-scripts") when validating an unmerged
+      # parabank-playwright PR before merging it.
