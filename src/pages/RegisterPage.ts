@@ -47,6 +47,12 @@ export class RegisterPage extends BasePage {
       await this.confirmPasswordInput.fill(working.confirmPassword);
       const retry = await this.submitAndAwaitOutcome();
       if (retry.kind === 'welcome') return working;
+      if (retry.kind === 'username-taken') {
+        TestLogger.warn(
+          'COLLISION-DOUBLE',
+          `ParaBank flagged 'username already exists' twice in a row for unique usernames — likely server false-positive (2nd attempt: ${working.username})`
+        );
+      }
       throw new Error(
         `Registration still failed after fresh username (${working.username}): ${retry.detail}`
       );

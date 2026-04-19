@@ -91,18 +91,21 @@ jobs:
               fi
             fi
 
-            # CF-specific hit count — uses the [CLOUDFLARE] tagged warning from RegisterPage
-            # grep -c outputs '0' and exits 1 when no matches; '|| true' keeps us at exit 0 without duplicating output
+            # Tagged-warning counts from TestLogger.warn — each tag maps to a distinct root cause
             CF_HITS=$(grep -cE '\[CLOUDFLARE\]' "$OUTPUT_FILE" || true)
             CF_HITS=${CF_HITS:-0}
             OTHER_TIMEOUT_HITS=$(grep -cE '\[REGISTER-TIMEOUT\]' "$OUTPUT_FILE" || true)
             OTHER_TIMEOUT_HITS=${OTHER_TIMEOUT_HITS:-0}
+            DOUBLE_COLLISION_HITS=$(grep -cE '\[COLLISION-DOUBLE\]' "$OUTPUT_FILE" || true)
+            DOUBLE_COLLISION_HITS=${DOUBLE_COLLISION_HITS:-0}
 
             # Build flaky/retry summary with cause attribution
             FLAKY_SUMMARY=""
             if [ "$FLAKY" -gt 0 ]; then
               if [ "$CF_HITS" -gt 0 ]; then
                 FLAKY_SUMMARY="$FLAKY flaky test(s) — $CF_HITS Cloudflare interstitial(s) detected (likely cause)"
+              elif [ "$DOUBLE_COLLISION_HITS" -gt 0 ]; then
+                FLAKY_SUMMARY="$FLAKY flaky test(s) — $DOUBLE_COLLISION_HITS ParaBank false-positive 'username exists' (both original AND regenerated username rejected; likely server bug)"
               elif [ "$OTHER_TIMEOUT_HITS" -gt 0 ]; then
                 FLAKY_SUMMARY="$FLAKY flaky test(s) — $OTHER_TIMEOUT_HITS non-CF registration timeout(s) detected"
               else
@@ -118,6 +121,7 @@ jobs:
             FLAKY=0
             CF_HITS=0
             OTHER_TIMEOUT_HITS=0
+            DOUBLE_COLLISION_HITS=0
             FAILED_TESTS="Test output not found"
             FLAKY_SUMMARY="Unable to determine — test output missing."
           fi
@@ -128,6 +132,7 @@ jobs:
           echo "flaky=$FLAKY" >> $GITHUB_OUTPUT
           echo "cf_hits=$CF_HITS" >> $GITHUB_OUTPUT
           echo "other_timeout_hits=$OTHER_TIMEOUT_HITS" >> $GITHUB_OUTPUT
+          echo "double_collision_hits=$DOUBLE_COLLISION_HITS" >> $GITHUB_OUTPUT
           echo "flaky_summary=$FLAKY_SUMMARY" >> $GITHUB_OUTPUT
 
           # Use delimiter for multiline output
@@ -154,6 +159,7 @@ jobs:
           echo "| 🔄 Flaky (passed on retry) | ${{ steps.test-summary.outputs.flaky }} |" >> $GITHUB_STEP_SUMMARY
           echo "| ☁ Cloudflare interstitials hit | ${{ steps.test-summary.outputs.cf_hits }} |" >> $GITHUB_STEP_SUMMARY
           echo "| ⏱ Other registration timeouts | ${{ steps.test-summary.outputs.other_timeout_hits }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔁 ParaBank double-collision (false-positive) | ${{ steps.test-summary.outputs.double_collision_hits }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Detail | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
