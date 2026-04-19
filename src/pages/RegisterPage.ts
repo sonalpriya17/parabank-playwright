@@ -42,15 +42,17 @@ export class RegisterPage extends BasePage {
 
     if (outcome.kind === 'username-taken') {
       working.username = UserFactory.generateUsername();
-      await this.usernameInput.fill(working.username);
-      await this.passwordInput.fill(working.password);
-      await this.confirmPasswordInput.fill(working.confirmPassword);
+      // Navigate to a fresh register page rather than refilling on the error page.
+      // ParaBank's JSESSIONID appears to retain state that causes repeated
+      // "username already exists" false-positives when the same session resubmits.
+      await this.navigateToRegister();
+      await this.fillAllFields(working);
       const retry = await this.submitAndAwaitOutcome();
       if (retry.kind === 'welcome') return working;
       if (retry.kind === 'username-taken') {
         TestLogger.warn(
           'COLLISION-DOUBLE',
-          `ParaBank flagged 'username already exists' twice in a row for unique usernames — likely server false-positive (2nd attempt: ${working.username})`
+          `ParaBank flagged 'username already exists' twice in a row even after fresh navigation — server-side false-positive (2nd attempt: ${working.username})`
         );
       }
       throw new Error(
