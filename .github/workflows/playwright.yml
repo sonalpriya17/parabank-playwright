@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Why manually triggered (optional)'
+        required: false
+        default: 'Manual re-run'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -85,23 +91,33 @@ jobs:
               fi
             fi
 
-            # Build flaky/retry summary
-            FLAKY_SUMMARY=""
-            if [ "$FLAKY" -gt 0 ]; then
-              FLAKY_SUMMARY="$FLAKY test(s) passed on retry (flaky)"
-            else
-              FLAKY_SUMMARY="No tests required retries. All tests passed on first attempt."
-            fi
-
-            # CF-specific failure count — uses the [CLOUDFLARE] tagged warning from RegisterPage
+            # CF-specific hit count — uses the [CLOUDFLARE] tagged warning from RegisterPage
             # grep -c outputs '0' and exits 1 when no matches; '|| true' keeps us at exit 0 without duplicating output
             CF_HITS=$(grep -cE '\[CLOUDFLARE\]' "$OUTPUT_FILE" || true)
             CF_HITS=${CF_HITS:-0}
+            OTHER_TIMEOUT_HITS=$(grep -cE '\[REGISTER-TIMEOUT\]' "$OUTPUT_FILE" || true)
+            OTHER_TIMEOUT_HITS=${OTHER_TIMEOUT_HITS:-0}
+
+            # Build flaky/retry summary with cause attribution
+            FLAKY_SUMMARY=""
+            if [ "$FLAKY" -gt 0 ]; then
+              if [ "$CF_HITS" -gt 0 ]; then
+                FLAKY_SUMMARY="$FLAKY flaky test(s) — $CF_HITS Cloudflare interstitial(s) detected (likely cause)"
+              elif [ "$OTHER_TIMEOUT_HITS" -gt 0 ]; then
+                FLAKY_SUMMARY="$FLAKY flaky test(s) — $OTHER_TIMEOUT_HITS non-CF registration timeout(s) detected"
+              else
+                FLAKY_SUMMARY="$FLAKY flaky test(s) — no known cause tagged in log; check trace.zip for root cause"
+              fi
+            else
+              FLAKY_SUMMARY="No tests required retries. All tests passed on first attempt."
+            fi
           else
             TOTAL=0
             PASSED=0
             FAILED=0
             FLAKY=0
+            CF_HITS=0
+            OTHER_TIMEOUT_HITS=0
             FAILED_TESTS="Test output not found"
             FLAKY_SUMMARY="Unable to determine — test output missing."
           fi
@@ -111,6 +127,7 @@ jobs:
           echo "failed=$FAILED" >> $GITHUB_OUTPUT
           echo "flaky=$FLAKY" >> $GITHUB_OUTPUT
           echo "cf_hits=$CF_HITS" >> $GITHUB_OUTPUT
+          echo "other_timeout_hits=$OTHER_TIMEOUT_HITS" >> $GITHUB_OUTPUT
           echo "flaky_summary=$FLAKY_SUMMARY" >> $GITHUB_OUTPUT
 
           # Use delimiter for multiline output
@@ -136,6 +153,7 @@ jobs:
           echo "| ❌ Failed | ${{ steps.test-summary.outputs.failed }} |" >> $GITHUB_STEP_SUMMARY
           echo "| 🔄 Flaky (passed on retry) | ${{ steps.test-summary.outputs.flaky }} |" >> $GITHUB_STEP_SUMMARY
           echo "| ☁ Cloudflare interstitials hit | ${{ steps.test-summary.outputs.cf_hits }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ⏱ Other registration timeouts | ${{ steps.test-summary.outputs.other_timeout_hits }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Detail | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
