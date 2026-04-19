@@ -20,6 +20,7 @@ permissions:
   contents: write
   pages: write
   id-token: write
+  pull-requests: write
 
 env:
   REPORT_URL: https://sonalpriya17.github.io/parabank-playwright/
@@ -170,6 +171,58 @@ jobs:
           echo "**Retry Summary:** ${{ steps.test-summary.outputs.flaky_summary }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "📊 [View Full Report](${{ env.REPORT_URL }})" >> $GITHUB_STEP_SUMMARY
+
+      - name: Post test results comment on PR
+        if: always() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          ARTIFACT_URL="${RUN_URL}#artifacts"
+          STATUS_ICON="✅"
+          STATUS_TEXT="All tests passed"
+          if [ "${{ steps.test-run.outcome }}" != "success" ]; then
+            STATUS_ICON="❌"
+            STATUS_TEXT="Some tests failed"
+          fi
+
+          BODY=$(cat <<COMMENT
+          ## 🎭 Playwright Test Results
+
+          ${STATUS_ICON} **${STATUS_TEXT}**
+
+          | Metric | Count |
+          |--------|-------|
+          | Total  | ${{ steps.test-summary.outputs.total }} |
+          | ✅ Passed | ${{ steps.test-summary.outputs.passed }} |
+          | ❌ Failed | ${{ steps.test-summary.outputs.failed }} |
+          | 🔄 Flaky (passed on retry) | ${{ steps.test-summary.outputs.flaky }} |
+          | ☁ Cloudflare interstitials hit | ${{ steps.test-summary.outputs.cf_hits }} |
+          | ⏱ Other registration timeouts | ${{ steps.test-summary.outputs.other_timeout_hits }} |
+          | 🔁 ParaBank double-collision | ${{ steps.test-summary.outputs.double_collision_hits }} |
+
+          **Retry Summary:** ${{ steps.test-summary.outputs.flaky_summary }}
+
+          **Commit:** \`${{ github.sha }}\`
+          **Run:** [#${{ github.run_number }}](${RUN_URL})
+          **Artifacts:** [Download Playwright report](${ARTIFACT_URL})
+
+          _Note: HTML report deploys to [GitHub Pages](${{ env.REPORT_URL }}) only on main-branch runs. For PR runs, download the \`playwright-report\` artifact from the Run link above and open \`index.html\` locally._
+          COMMENT
+          )
+
+          # Find any existing bot comment and either update it or create new
+          COMMENT_ID=$(gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
+            --jq '.[] | select(.user.login == "github-actions[bot]") | select(.body | contains("🎭 Playwright Test Results")) | .id' \
+            | head -1)
+
+          if [ -n "$COMMENT_ID" ]; then
+            gh api -X PATCH "repos/${{ github.repository }}/issues/comments/$COMMENT_ID" -f body="$BODY"
+            echo "Updated existing comment $COMMENT_ID"
+          else
+            gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" -f body="$BODY"
+            echo "Created new comment"
+          fi
 
       - name: Append run to test-history.csv
         if: always() && github.ref == 'refs/heads/main' && github.event_name == 'push'
