@@ -54,17 +54,29 @@ const tagCounts = Object.fromEntries(
   Object.entries(TAGS).map(([k, re]) => [k, (stdoutBlob.match(re) ?? []).length]),
 );
 
+function attributeCause(tc) {
+  if (tc.cf_hits > 0) return `${tc.cf_hits} Cloudflare interstitial(s) detected`;
+  if (tc.double_collision_hits > 0) return `${tc.double_collision_hits} ParaBank false-positive 'username exists' (server bug)`;
+  if (tc.other_timeout_hits > 0) return `${tc.other_timeout_hits} non-CF registration timeout(s)`;
+  return null;
+}
+
 let flakySummary;
-if (flaky === 0) {
+if (failed === 0 && flaky === 0) {
   flakySummary = 'No tests required retries. All tests passed on first attempt.';
-} else if (tagCounts.cf_hits > 0) {
-  flakySummary = `${flaky} flaky test(s) — ${tagCounts.cf_hits} Cloudflare interstitial(s) detected (likely cause)`;
-} else if (tagCounts.double_collision_hits > 0) {
-  flakySummary = `${flaky} flaky test(s) — ${tagCounts.double_collision_hits} ParaBank false-positive 'username exists' (both original AND regenerated username rejected; likely server bug)`;
-} else if (tagCounts.other_timeout_hits > 0) {
-  flakySummary = `${flaky} flaky test(s) — ${tagCounts.other_timeout_hits} non-CF registration timeout(s) detected`;
 } else {
-  flakySummary = `${flaky} flaky test(s) — no known cause tagged in log; check trace.zip for root cause`;
+  const cause = attributeCause(tagCounts);
+  const parts = [];
+  if (failed > 0) {
+    parts.push(`${failed} test(s) failed hard (retries exhausted)`);
+  }
+  if (flaky > 0) {
+    parts.push(`${flaky} flaky (passed on retry)`);
+  }
+  const head = parts.join(', ');
+  flakySummary = cause
+    ? `${head} — ${cause}`
+    : `${head} — no known cause tagged; check trace.zip`;
 }
 
 const outputs = {
