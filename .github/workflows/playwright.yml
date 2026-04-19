@@ -170,15 +170,21 @@ jobs:
           echo "📊 [View Full Report](${{ env.REPORT_URL }})" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          # Stability snippet — renders recent-runs table from test-history.csv if present
+          # Stability snippet — fetch test-history.csv from ci-stability branch, not from this ref
           # CSV columns: 1=timestamp 2=branch 3=sha 4=actor 5=total 6=passed 7=failed 8=flaky 9=cf_hits 10=outcome 11=duration 12=url
-          if [ -f test-history.csv ] && [ "$(wc -l < test-history.csv)" -gt 1 ]; then
+          # -sLf: silent + follow redirects + FAIL on 4xx/5xx (prevents HTML error pages being stored as CSV)
+          rm -f /tmp/stability.csv
+          curl -sLf "https://raw.githubusercontent.com/${{ github.repository }}/ci-stability/test-history.csv" -o /tmp/stability.csv 2>/dev/null || true
+          CSV_HEADER_EXPECTED="timestamp,branch,commit_sha,actor,total,passed,failed,flaky,cf_hits,outcome,duration_sec,run_url"
+          # Only render the stability section when real data exists — otherwise stay silent.
+          if [ -s /tmp/stability.csv ] && [ "$(head -n 1 /tmp/stability.csv)" = "$CSV_HEADER_EXPECTED" ] && [ "$(wc -l < /tmp/stability.csv)" -gt 1 ]; then
+            STABILITY_URL="${{ github.server_url }}/${{ github.repository }}/blob/ci-stability/STABILITY.md"
             {
-              echo "## 📈 Recent Stability (last runs on main)"
+              echo "## 📈 Recent Stability ([full report](${STABILITY_URL}))"
               echo ""
               echo "| Date | Commit | Pass | Fail | Flake | CF hits | Outcome | Duration |"
               echo "|------|--------|-----:|-----:|------:|--------:|:-------:|---------:|"
-              tail -10 test-history.csv | awk -F, '
+              tail -10 /tmp/stability.csv | awk -F, '
                 NR>0 && $1 !~ /^timestamp/ {
                   icon = ($10 == "success") ? "✅" : "❌"
                   ts = substr($1, 1, 10)
@@ -186,8 +192,6 @@ jobs:
                 }
               '
             } >> $GITHUB_STEP_SUMMARY
-          else
-            echo "_Recent stability data will appear after the first main-branch run appends to \`test-history.csv\`._" >> $GITHUB_STEP_SUMMARY
           fi
 
       - name: Post test results comment on PR
@@ -203,12 +207,18 @@ jobs:
             STATUS_TEXT="Some tests failed"
           fi
 
-          # Render recent-stability table (empty string if file missing)
+          # Render recent-stability table from ci-stability branch
+          # -sLf: fail on non-2xx so we don't render HTML error pages as CSV
+          rm -f /tmp/pr_stability.csv
+          curl -sLf "https://raw.githubusercontent.com/${{ github.repository }}/ci-stability/test-history.csv" -o /tmp/pr_stability.csv 2>/dev/null || true
+          CSV_HEADER_EXPECTED="timestamp,branch,commit_sha,actor,total,passed,failed,flaky,cf_hits,outcome,duration_sec,run_url"
+          # Only render the stability section when real data exists — otherwise stay silent.
           STABILITY_SECTION=""
-          if [ -f test-history.csv ] && [ "$(wc -l < test-history.csv)" -gt 1 ]; then
-            STABILITY_SECTION=$(awk -F, '
+          if [ -s /tmp/pr_stability.csv ] && [ "$(head -n 1 /tmp/pr_stability.csv)" = "$CSV_HEADER_EXPECTED" ] && [ "$(wc -l < /tmp/pr_stability.csv)" -gt 1 ]; then
+            STABILITY_URL="${{ github.server_url }}/${{ github.repository }}/blob/ci-stability/STABILITY.md"
+            STABILITY_SECTION=$(awk -F, -v url="$STABILITY_URL" '
               BEGIN {
-                print "### 📈 Recent Stability (last runs on main)"
+                printf "### 📈 Recent Stability ([full report](%s))\n", url
                 print ""
                 print "| Date | Commit | Pass | Fail | Flake | CF hits | Outcome | Duration |"
                 print "|------|--------|-----:|-----:|------:|--------:|:-------:|---------:|"
@@ -226,9 +236,7 @@ jobs:
                 start = NR - count + 1
                 for (i = NR; i >= start; i--) if (rows[i]) print rows[i]
               }
-            ' test-history.csv)
-          else
-            STABILITY_SECTION="_Recent stability data will appear after the first main-branch run appends to \`test-history.csv\`._"
+            ' /tmp/pr_stability.csv)
           fi
 
           # Heredoc without leading whitespace — GitHub markdown treats indented blocks as code
@@ -293,27 +301,53 @@ jobs:
           DURATION_SEC=${DURATION_SEC:-0}
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
+          CSV_HEADER="timestamp,branch,commit_sha,actor,total,passed,failed,flaky,cf_hits,outcome,duration_sec,run_url"
           ROW="${TIMESTAMP},${{ github.ref_name }},${SHORT_SHA},${{ github.actor }},${{ steps.test-summary.outputs.total }},${{ steps.test-summary.outputs.passed }},${{ steps.test-summary.outputs.failed }},${{ steps.test-summary.outputs.flaky }},${{ steps.test-summary.outputs.cf_hits }},${OUTCOME},${DURATION_SEC},${RUN_URL}"
           echo "Appending: $ROW"
 
-          # Ensure header exists (first run, or file missing)
-          if [ ! -f test-history.csv ] || ! head -1 test-history.csv | grep -q 'timestamp,branch'; then
-            echo "timestamp,branch,commit_sha,actor,total,passed,failed,flaky,cf_hits,outcome,duration_sec,run_url" > test-history.csv
+          # Push to dedicated 'ci-stability' branch (main is protected and requires test check).
+          # Strategy: clone ci-stability, append the new row to its existing CSV, regenerate
+          # STABILITY.md from that MERGED history, push. Critical that we append to the
+          # existing branch's CSV — not to a fresh workspace one, which would wipe history.
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          STAB_DIR=$(mktemp -d)
+          AUTH_URL="https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+
+          # Clone existing ci-stability, or init as orphan if branch doesn't exist yet
+          if git clone --depth 50 --branch ci-stability "$AUTH_URL" "$STAB_DIR/repo" 2>/dev/null; then
+            echo "Cloned existing ci-stability branch"
+          else
+            echo "Initializing ci-stability as orphan branch (first run)"
+            mkdir -p "$STAB_DIR/repo"
+            cd "$STAB_DIR/repo"
+            git init -b ci-stability
+            git remote add origin "$AUTH_URL"
+            cd - >/dev/null
           fi
 
+          cd "$STAB_DIR/repo"
+
+          # Ensure CSV exists with the correct header; if missing or malformed, start fresh.
+          if [ ! -f test-history.csv ] || [ "$(head -n 1 test-history.csv)" != "$CSV_HEADER" ]; then
+            echo "$CSV_HEADER" > test-history.csv
+          fi
+
+          # APPEND the new row to the EXISTING (cloned) CSV. This preserves history.
           echo "$ROW" >> test-history.csv
 
-          # Regenerate STABILITY.md from full CSV
+          # Deduplicate just in case two concurrent main runs race to append the same SHA.
+          # Preserve header, sort+uniq the body, keep chronological order by timestamp.
+          (head -n 1 test-history.csv; tail -n +2 test-history.csv | sort -u -t, -k1,1) > test-history.dedup.csv
+          mv test-history.dedup.csv test-history.csv
+
+          # Regenerate STABILITY.md from the full merged history
           python3 - <<'PY'
           import csv
-          from collections import Counter
 
-          rows = []
-          try:
-              with open('test-history.csv') as f:
-                  rows = list(csv.DictReader(f))
-          except FileNotFoundError:
-              pass
+          with open('test-history.csv') as f:
+              rows = list(csv.DictReader(f))
 
           if not rows:
               with open('STABILITY.md', 'w') as f:
@@ -332,7 +366,6 @@ jobs:
                   return default
 
           recent_pass = sum(1 for r in recent if r['outcome'] == 'success')
-          recent_fail = sum(1 for r in recent if r['outcome'] == 'failure')
           flake_total = sum(as_int(r.get('flaky', 0)) for r in recent)
           cf_total = sum(as_int(r.get('cf_hits', 0)) for r in recent)
           tests_total = sum(as_int(r.get('total', 0)) for r in recent)
@@ -340,13 +373,11 @@ jobs:
 
           lines = ['# Suite Stability\n']
           lines.append(f'_Auto-generated from [test-history.csv](test-history.csv) — last {len(recent)} runs on `main`._\n')
-
           lines.append('## Headline\n')
           lines.append(f'- **Runs:** {recent_pass} / {len(recent)} succeeded ({pct(recent_pass, len(recent))})')
           lines.append(f'- **Tests:** {tests_passed} / {tests_total} passed ({pct(tests_passed, tests_total)})')
           lines.append(f'- **Flakes:** {flake_total} flaky tests across recent runs')
           lines.append(f'- **Cloudflare interstitials:** {cf_total} total hits\n')
-
           lines.append('## Recent runs\n')
           lines.append('| Date | Commit | Pass | Fail | Flake | CF hits | Outcome | Duration |')
           lines.append('|------|--------|-----:|-----:|------:|--------:|:-------:|---------:|')
@@ -363,13 +394,14 @@ jobs:
           print('STABILITY.md regenerated')
           PY
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # Pull latest before committing to reduce race with concurrent main runs
-          git pull --rebase origin main || true
           git add test-history.csv STABILITY.md
-          git commit -m "ci: append run ${SHORT_SHA} to test-history.csv [skip ci]" || echo "No changes to commit"
-          git push origin main || echo "Push failed — likely raced with another run; non-fatal"
+          git commit -m "ci: append run ${SHORT_SHA} to stability history" || { echo "No changes to commit"; exit 0; }
+          # Retry push once on race (concurrent main runs append simultaneously)
+          if ! git push origin ci-stability 2>/dev/null; then
+            echo "Push raced; pulling and re-applying"
+            git pull --rebase origin ci-stability || true
+            git push origin ci-stability || echo "Push still failed — data will be included next run"
+          fi
 
       - name: Upload Playwright report artifact
         uses: actions/upload-artifact@v4
