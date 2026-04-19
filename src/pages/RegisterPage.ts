@@ -2,6 +2,7 @@ import { BasePage } from './BasePage';
 import { UserData } from '../data/types';
 import { Constants } from '../common/Constants';
 import { UserFactory } from '../data/factories/UserFactory';
+import { TestLogger } from '../utils/TestLogger';
 
 type RegistrationOutcome = {
   kind: 'welcome' | 'username-taken' | 'server-error' | 'form-rejected' | 'timeout';
@@ -116,9 +117,30 @@ export class RegisterPage extends BasePage {
       return { kind: 'form-rejected', detail: `Registration rejected: ${detail}` };
     }
 
+    const cfStillShowing = await this.page
+      .getByText('Performing security verification')
+      .isVisible()
+      .catch(() => false);
+    const currentUrl = this.page.url();
+
+    if (cfStillShowing) {
+      TestLogger.warn(
+        'CLOUDFLARE',
+        `Registration blocked by CF interstitial — did not clear within ${terminalTimeout / 1000}s at ${currentUrl}`
+      );
+      return {
+        kind: 'timeout',
+        detail: `Cloudflare bot-challenge did not clear within ${terminalTimeout / 1000}s (url=${currentUrl})`,
+      };
+    }
+
+    TestLogger.warn(
+      'REGISTER-TIMEOUT',
+      `Neither welcome nor error rendered within ${terminalTimeout / 1000}s at ${currentUrl}`
+    );
     return {
       kind: 'timeout',
-      detail: `Neither welcome nor error rendered within ${terminalTimeout / 1000}s (likely Cloudflare interstitial never cleared)`,
+      detail: `Neither welcome nor error rendered within ${terminalTimeout / 1000}s (url=${currentUrl})`,
     };
   }
 

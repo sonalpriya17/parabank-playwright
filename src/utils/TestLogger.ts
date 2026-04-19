@@ -6,4 +6,8 @@ export class TestLogger {
       console.log(`[${tag}] ${message}`);
     }
   }
+
+  static warn(tag: string, message: string): void {
+    console.warn(`[${tag}] ${message}`);
+  }
 }
