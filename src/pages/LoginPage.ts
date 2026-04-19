@@ -17,6 +17,10 @@ export class LoginPage extends BasePage {
     await this.usernameInput.fill(username);
     await this.passwordInput.fill(password);
     await this.loginButton.click();
+    await Promise.race([
+      this.accountsOverviewHeading.waitFor({ state: 'visible', timeout: 60_000 }),
+      this.errorMessage.first().waitFor({ state: 'visible', timeout: 60_000 }),
+    ]);
   }
 
   async getPageHeading(): Promise<string> {

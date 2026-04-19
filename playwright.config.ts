@@ -17,9 +17,9 @@ export default defineConfig({
   testDir,
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 2 : 1,
+  retries: 3,
   workers: 1,
-  timeout: 60_000,
+  timeout: 90_000,
   expect: { timeout: 10_000 },
 
   reporter: [
@@ -29,17 +29,27 @@ export default defineConfig({
 
   use: {
     baseURL: process.env.BASE_URL || 'https://parabank.parasoft.com',
-    screenshot: 'only-on-failure',
-    video: 'retain-on-failure',
+    screenshot: 'on',
+    video: 'on-first-retry',
     trace: 'retain-on-failure',
     actionTimeout: 15_000,
-    navigationTimeout: 30_000,
+    navigationTimeout: 45_000,
+    userAgent:
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    extraHTTPHeaders: {
+      'Accept-Language': 'en-US,en;q=0.9',
+    },
   },
 
   projects: [
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      use: {
+        ...devices['Desktop Chrome'],
+        launchOptions: {
+          args: ['--disable-blink-features=AutomationControlled'],
+        },
+      },
     },
   ],
 });

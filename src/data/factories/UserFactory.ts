@@ -1,12 +1,18 @@
+import { randomUUID } from 'crypto';
 import { faker } from '@faker-js/faker';
 import { UserData } from '../types';
 import { Constants } from '../../common/Constants';
 
 export const UserFactory = {
+  generateUsername(sessionKey?: string): string {
+    const fakerPart = faker.string.alphanumeric({ length: 6, casing: 'mixed' });
+    const uuidPart = randomUUID().replace(/-/g, '').slice(0, 8);
+    const prefix = sessionKey ? sessionKey.slice(0, 4) : 'u';
+    return `u_${prefix}_${fakerPart}${uuidPart}`;
+  },
+
   create(sessionKey?: string): UserData {
-    const username = sessionKey
-      ? `user_${sessionKey.slice(0, 8)}`
-      : `user_${faker.string.alphanumeric(8)}`;
+    const username = UserFactory.generateUsername(sessionKey);
 
     const password = Constants.DEFAULT_PASSWORD;
 

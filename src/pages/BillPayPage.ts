@@ -34,6 +34,10 @@ export class BillPayPage extends BasePage {
     await this.amountInput.fill(payee.amount);
     await this.fromAccountSelect.selectOption(fromAccount);
     await this.sendPaymentButton.click();
+    await Promise.race([
+      this.successHeading.waitFor({ state: 'visible', timeout: 60_000 }),
+      this.page.locator('#rightPanel h1.title', { hasText: 'Error' }).waitFor({ state: 'visible', timeout: 60_000 }),
+    ]);
   }
 
   async getSuccessDetails(): Promise<string> {

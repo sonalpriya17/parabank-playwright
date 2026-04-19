@@ -6,10 +6,11 @@ export class BasePage {
   async navigate(path: string): Promise<void> {
     await this.page.goto(path, {
       waitUntil: 'domcontentloaded',
+      timeout: 45_000,
     });
   }
 
   async waitForPageLoad(): Promise<void> {
-    await this.page.waitForLoadState('domcontentloaded');
+    await this.page.waitForLoadState('load');
   }
 }

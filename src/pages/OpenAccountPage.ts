@@ -19,9 +19,13 @@ export class OpenAccountPage extends BasePage {
     await this.fromAccountSelect.waitFor({ state: 'visible' });
     await this.fromAccountSelect.locator('option').first().waitFor({ state: 'attached' });
     await this.openAccountButton.click();
-    await this.newAccountNumber.waitFor({ state: 'visible', timeout: 15_000 });
-    const accountNumber = await this.newAccountNumber.textContent();
-    return (accountNumber || '').trim();
+    await Promise.race([
+      this.successHeading.waitFor({ state: 'visible', timeout: 60_000 }),
+      this.page.locator('#rightPanel h1.title', { hasText: 'Error' }).waitFor({ state: 'visible', timeout: 60_000 }),
+    ]);
+    const populatedAccountNumber = this.page.locator('#newAccountId').filter({ hasText: /\d+/ });
+    await populatedAccountNumber.waitFor({ state: 'attached', timeout: 30_000 });
+    return ((await populatedAccountNumber.textContent()) || '').trim();
   }
 
   async getNewAccountNumber(): Promise<string> {
