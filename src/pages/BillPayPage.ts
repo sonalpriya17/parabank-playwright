@@ -36,7 +36,7 @@ export class BillPayPage extends BasePage {
     await this.sendPaymentButton.click();
     await Promise.race([
       this.successHeading.waitFor({ state: 'visible', timeout: 60_000 }),
-      this.page.locator('#rightPanel h1.title', { hasText: 'Error' }).waitFor({ state: 'visible', timeout: 60_000 }),
+      this.serverErrorHeading.waitFor({ state: 'visible', timeout: 60_000 }),
     ]);
   }
 

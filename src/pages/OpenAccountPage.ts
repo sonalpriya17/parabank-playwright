@@ -21,7 +21,7 @@ export class OpenAccountPage extends BasePage {
     await this.openAccountButton.click();
     await Promise.race([
       this.successHeading.waitFor({ state: 'visible', timeout: 60_000 }),
-      this.page.locator('#rightPanel h1.title', { hasText: 'Error' }).waitFor({ state: 'visible', timeout: 60_000 }),
+      this.serverErrorHeading.waitFor({ state: 'visible', timeout: 60_000 }),
     ]);
     const populatedAccountNumber = this.page.locator('#newAccountId').filter({ hasText: /\d+/ });
     await populatedAccountNumber.waitFor({ state: 'attached', timeout: 30_000 });

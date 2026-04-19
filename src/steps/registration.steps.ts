@@ -14,10 +14,11 @@ Given('the user navigates to the registration page', async ({ registerPage }) =>
 When(
   'the user registers with the following details',
   async ({ registerPage, session }, dataTable: DataTable) => {
-    const user = DataTableParser.parseUserData(dataTable.hashes(), session);
-    session.user = user;
-    TestLogger.log('Registration', `Username: ${user.username}`);
-    await registerPage.register(user);
+    const proposed = DataTableParser.parseUserData(dataTable.hashes(), session);
+    TestLogger.log('Registration', `Proposed username: ${proposed.username}`);
+    const registered = await registerPage.register(proposed);
+    session.user = registered;
+    TestLogger.log('Registration', `Registered username: ${registered.username}`);
   }
 );
 

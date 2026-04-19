@@ -19,12 +19,13 @@ Given('a new user is registered', async ({ page, registerPage, session }) => {
   await page.goto(Constants.PATHS.HOME, { waitUntil: 'domcontentloaded' });
   await expect(page).toHaveTitle(/ParaBank/);
 
-  const user = UserFactory.create(session.sessionKey);
-  session.user = user;
-  TestLogger.log('Registration', `Username: ${user.username}`);
+  const proposed = UserFactory.create(session.sessionKey);
+  TestLogger.log('Registration', `Proposed username: ${proposed.username}`);
 
   await registerPage.navigateToRegister();
-  await registerPage.register(user);
+  const registered = await registerPage.register(proposed);
+  session.user = registered;
+  TestLogger.log('Registration', `Registered username: ${registered.username}`);
 
   await expect(registerPage.welcomeMessage).toBeVisible({ timeout: 10_000 });
   await expect(registerPage.welcomeMessage).toContainText(ResponseMessages.REGISTRATION.SUCCESS_TITLE);

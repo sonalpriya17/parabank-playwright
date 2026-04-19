@@ -24,30 +24,31 @@ export class RegisterPage extends BasePage {
   get registerButton() { return this.page.locator('input[value="Register"]'); }
   get welcomeMessage() { return this.page.locator('#rightPanel h1.title', { hasText: 'Welcome' }); }
   get successMessage() { return this.page.locator('#rightPanel p').first(); }
-  get serverErrorHeading() { return this.page.locator('#rightPanel h1.title', { hasText: 'Error' }); }
   get formErrorMessage() { return this.page.locator('#rightPanel .error').first(); }
 
   async navigateToRegister(): Promise<void> {
     await this.navigate(Constants.PATHS.REGISTER);
   }
 
-  async register(user: UserData): Promise<void> {
-    await this.fillAllFields(user);
-    await this.ensureFormIntact(user);
+  async register(user: UserData): Promise<UserData> {
+    const working: UserData = { ...user };
+
+    await this.fillAllFields(working);
+    await this.ensureFormIntact(working);
 
     const outcome = await this.submitAndAwaitOutcome();
 
-    if (outcome.kind === 'welcome') return;
+    if (outcome.kind === 'welcome') return working;
 
     if (outcome.kind === 'username-taken') {
-      user.username = UserFactory.generateUsername();
-      await this.usernameInput.fill(user.username);
-      await this.passwordInput.fill(user.password);
-      await this.confirmPasswordInput.fill(user.confirmPassword);
+      working.username = UserFactory.generateUsername();
+      await this.usernameInput.fill(working.username);
+      await this.passwordInput.fill(working.password);
+      await this.confirmPasswordInput.fill(working.confirmPassword);
       const retry = await this.submitAndAwaitOutcome();
-      if (retry.kind === 'welcome') return;
+      if (retry.kind === 'welcome') return working;
       throw new Error(
-        `Registration still failed after fresh username (${user.username}): ${retry.detail}`
+        `Registration still failed after fresh username (${working.username}): ${retry.detail}`
       );
     }
 
@@ -70,7 +71,18 @@ export class RegisterPage extends BasePage {
   }
 
   private async ensureFormIntact(user: UserData): Promise<void> {
-    if ((await this.firstNameInput.inputValue()) === user.firstName) return;
+    const [firstName, password, username] = await Promise.all([
+      this.firstNameInput.inputValue(),
+      this.passwordInput.inputValue(),
+      this.usernameInput.inputValue(),
+    ]);
+    if (
+      firstName === user.firstName &&
+      password === user.password &&
+      username === user.username
+    ) {
+      return;
+    }
     await this.navigateToRegister();
     await this.fillAllFields(user);
   }
