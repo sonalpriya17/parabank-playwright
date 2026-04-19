@@ -39,6 +39,8 @@ jobs:
 
       - name: Checkout parabank-playwright
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.client_payload.target_branch || 'main' }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
