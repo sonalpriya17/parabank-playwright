@@ -30,7 +30,7 @@ export default defineConfig({
   use: {
     baseURL: process.env.BASE_URL || 'https://parabank.parasoft.com',
     screenshot: 'on',
-    video: 'on-first-retry',
+    video: 'on',
     trace: 'retain-on-failure',
     actionTimeout: 15_000,
     navigationTimeout: 45_000,
