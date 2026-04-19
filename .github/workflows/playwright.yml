@@ -11,9 +11,15 @@ on:
         description: 'Why manually triggered (optional)'
         required: false
         default: 'Manual re-run'
+  # Fires when an upstream repo (e.g. sonalpriya17/fabric_assignment) sends
+  # a repository_dispatch event. Payload shape: { source_repo, sha, ref }.
+  repository_dispatch:
+    types: [upstream-push]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # For upstream dispatches, group per (source_repo, sha) so concurrent
+  # upstream commits don't cancel each other. For everything else, use ref.
+  group: ${{ github.workflow }}-${{ github.event_name == 'repository_dispatch' && format('dispatch-{0}-{1}', github.event.client_payload.source_repo, github.event.client_payload.sha) || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -31,6 +37,20 @@ jobs:
     timeout-minutes: 30
 
     steps:
+      - name: Post pending status to upstream
+        if: github.event_name == 'repository_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.UPSTREAM_STATUS_PAT }}
+          SOURCE_REPO: ${{ github.event.client_payload.source_repo }}
+          SHA: ${{ github.event.client_payload.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh api "repos/$SOURCE_REPO/statuses/$SHA" \
+            -f state=pending \
+            -f context=parabank-e2e \
+            -f description="E2E suite running" \
+            -f target_url="$RUN_URL"
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -55,353 +75,50 @@ jobs:
         run: npx bddgen
 
       - name: Run Playwright tests
-        run: npx playwright test 2>&1 | tee playwright-output.txt
+        run: npx playwright test
         continue-on-error: true
         id: test-run
 
       - name: Parse test results
         if: always()
         id: test-summary
-        run: |
-          OUTPUT_FILE="playwright-output.txt"
-          if [ -f "$OUTPUT_FILE" ]; then
-            # Playwright prints counts on separate lines when there are failures/flaky:
-            #   1 failed
-            #   2 flaky
-            #   4 passed (1.4m)
-            # Or on a single line when all pass: "7 passed (30s)"
-            # Grep all summary lines, then extract each count independently
-            SUMMARY_BLOCK=$(grep -E '^\s*[0-9]+ (passed|failed|flaky)' "$OUTPUT_FILE")
-
-            PASSED=$(echo "$SUMMARY_BLOCK" | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' || echo "0")
-            FAILED=$(echo "$SUMMARY_BLOCK" | grep -oE '[0-9]+ failed' | grep -oE '[0-9]+' || echo "0")
-            FLAKY=$(echo "$SUMMARY_BLOCK" | grep -oE '[0-9]+ flaky' | grep -oE '[0-9]+' || echo "0")
-
-            PASSED=${PASSED:-0}
-            FAILED=${FAILED:-0}
-            FLAKY=${FLAKY:-0}
-
-            TOTAL=$((PASSED + FAILED + FLAKY))
-
-            # Collect failed test names from Playwright output
-            FAILED_TESTS=""
-            if [ "$FAILED" -gt 0 ]; then
-              FAILED_TESTS=$(grep -E '^\s+[0-9]+\)' "$OUTPUT_FILE" | sed 's/^[[:space:]]*//' | head -10)
-              if [ -z "$FAILED_TESTS" ]; then
-                FAILED_TESTS=$(grep -E '✘|FAIL' "$OUTPUT_FILE" | head -10)
-              fi
-            fi
-
-            # Tagged-warning counts from TestLogger.warn — each tag maps to a distinct root cause
-            CF_HITS=$(grep -cE '\[CLOUDFLARE\]' "$OUTPUT_FILE" || true)
-            CF_HITS=${CF_HITS:-0}
-            OTHER_TIMEOUT_HITS=$(grep -cE '\[REGISTER-TIMEOUT\]' "$OUTPUT_FILE" || true)
-            OTHER_TIMEOUT_HITS=${OTHER_TIMEOUT_HITS:-0}
-            DOUBLE_COLLISION_HITS=$(grep -cE '\[COLLISION-DOUBLE\]' "$OUTPUT_FILE" || true)
-            DOUBLE_COLLISION_HITS=${DOUBLE_COLLISION_HITS:-0}
-
-            # Build flaky/retry summary with cause attribution
-            FLAKY_SUMMARY=""
-            if [ "$FLAKY" -gt 0 ]; then
-              if [ "$CF_HITS" -gt 0 ]; then
-                FLAKY_SUMMARY="$FLAKY flaky test(s) — $CF_HITS Cloudflare interstitial(s) detected (likely cause)"
-              elif [ "$DOUBLE_COLLISION_HITS" -gt 0 ]; then
-                FLAKY_SUMMARY="$FLAKY flaky test(s) — $DOUBLE_COLLISION_HITS ParaBank false-positive 'username exists' (both original AND regenerated username rejected; likely server bug)"
-              elif [ "$OTHER_TIMEOUT_HITS" -gt 0 ]; then
-                FLAKY_SUMMARY="$FLAKY flaky test(s) — $OTHER_TIMEOUT_HITS non-CF registration timeout(s) detected"
-              else
-                FLAKY_SUMMARY="$FLAKY flaky test(s) — no known cause tagged in log; check trace.zip for root cause"
-              fi
-            else
-              FLAKY_SUMMARY="No tests required retries. All tests passed on first attempt."
-            fi
-          else
-            TOTAL=0
-            PASSED=0
-            FAILED=0
-            FLAKY=0
-            CF_HITS=0
-            OTHER_TIMEOUT_HITS=0
-            DOUBLE_COLLISION_HITS=0
-            FAILED_TESTS="Test output not found"
-            FLAKY_SUMMARY="Unable to determine — test output missing."
-          fi
-
-          echo "total=$TOTAL" >> $GITHUB_OUTPUT
-          echo "passed=$PASSED" >> $GITHUB_OUTPUT
-          echo "failed=$FAILED" >> $GITHUB_OUTPUT
-          echo "flaky=$FLAKY" >> $GITHUB_OUTPUT
-          echo "cf_hits=$CF_HITS" >> $GITHUB_OUTPUT
-          echo "other_timeout_hits=$OTHER_TIMEOUT_HITS" >> $GITHUB_OUTPUT
-          echo "double_collision_hits=$DOUBLE_COLLISION_HITS" >> $GITHUB_OUTPUT
-          echo "flaky_summary=$FLAKY_SUMMARY" >> $GITHUB_OUTPUT
-
-          # Use delimiter for multiline output
-          echo "failed_tests<<EOF" >> $GITHUB_OUTPUT
-          echo "$FAILED_TESTS" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+        run: node scripts/parse-results.mjs
 
       - name: Generate GitHub Actions test summary
         if: always()
-        run: |
-          echo "## 🎭 Playwright E2E Test Results" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          if [ "${{ steps.test-run.outcome }}" == "success" ]; then
-            echo "✅ **All tests passed**" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "❌ **Some tests failed**" >> $GITHUB_STEP_SUMMARY
-          fi
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
-          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Total Tests | ${{ steps.test-summary.outputs.total }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| ✅ Passed | ${{ steps.test-summary.outputs.passed }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| ❌ Failed | ${{ steps.test-summary.outputs.failed }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| 🔄 Flaky (passed on retry) | ${{ steps.test-summary.outputs.flaky }} |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Detail | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Branch | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Triggered by | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Retry Summary:** ${{ steps.test-summary.outputs.flaky_summary }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "📊 [View Full Report](${{ env.REPORT_URL }})" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          # Stability snippet — fetch test-history.csv from ci-stability branch, not from this ref
-          # CSV columns: 1=timestamp 2=branch 3=sha 4=actor 5=total 6=passed 7=failed 8=flaky 9=cf_hits 10=outcome 11=duration 12=url
-          # -sLf: silent + follow redirects + FAIL on 4xx/5xx (prevents HTML error pages being stored as CSV)
-          rm -f /tmp/stability.csv
-          curl -sLf "https://raw.githubusercontent.com/${{ github.repository }}/ci-stability/test-history.csv" -o /tmp/stability.csv 2>/dev/null || true
-          CSV_HEADER_EXPECTED="timestamp,branch,commit_sha,actor,total,passed,failed,flaky,cf_hits,outcome,duration_sec,run_url"
-          # Only render the stability section when real data exists — otherwise stay silent.
-          if [ -s /tmp/stability.csv ] && [ "$(head -n 1 /tmp/stability.csv)" = "$CSV_HEADER_EXPECTED" ] && [ "$(wc -l < /tmp/stability.csv)" -gt 1 ]; then
-            STABILITY_URL="${{ github.server_url }}/${{ github.repository }}/blob/ci-stability/STABILITY.md"
-            {
-              echo "## 📈 Recent Stability ([full report](${STABILITY_URL}))"
-              echo ""
-              echo "| Date | Commit | Pass | Fail | Flake | CF hits | Outcome | Duration |"
-              echo "|------|--------|-----:|-----:|------:|--------:|:-------:|---------:|"
-              tail -10 /tmp/stability.csv | awk -F, '
-                NR>0 && $1 !~ /^timestamp/ {
-                  icon = ($10 == "success") ? "✅" : "❌"
-                  ts = substr($1, 1, 10)
-                  printf "| %s | [`%s`](%s) | %s | %s | %s | %s | %s | %ss |\n", ts, $3, $12, $6, $7, $8, $9, icon, $11
-                }
-              '
-            } >> $GITHUB_STEP_SUMMARY
-          fi
+        env:
+          OUTCOME: ${{ steps.test-run.outcome }}
+          TOTAL: ${{ steps.test-summary.outputs.total }}
+          PASSED: ${{ steps.test-summary.outputs.passed }}
+          FAILED: ${{ steps.test-summary.outputs.failed }}
+          FLAKY: ${{ steps.test-summary.outputs.flaky }}
+          FLAKY_SUMMARY: ${{ steps.test-summary.outputs.flaky_summary }}
+          BRANCH: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
+          ACTOR: ${{ github.actor }}
+          REPORT_URL: ${{ env.REPORT_URL }}
+        run: node scripts/render-summary.mjs
 
       - name: Post test results comment on PR
         if: always() && github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          STATUS_ICON="✅"
-          STATUS_TEXT="All tests passed"
-          if [ "${{ steps.test-run.outcome }}" != "success" ]; then
-            STATUS_ICON="❌"
-            STATUS_TEXT="Some tests failed"
-          fi
-
-          # Render recent-stability table from ci-stability branch
-          # -sLf: fail on non-2xx so we don't render HTML error pages as CSV
-          rm -f /tmp/pr_stability.csv
-          curl -sLf "https://raw.githubusercontent.com/${{ github.repository }}/ci-stability/test-history.csv" -o /tmp/pr_stability.csv 2>/dev/null || true
-          CSV_HEADER_EXPECTED="timestamp,branch,commit_sha,actor,total,passed,failed,flaky,cf_hits,outcome,duration_sec,run_url"
-          # Only render the stability section when real data exists — otherwise stay silent.
-          STABILITY_SECTION=""
-          if [ -s /tmp/pr_stability.csv ] && [ "$(head -n 1 /tmp/pr_stability.csv)" = "$CSV_HEADER_EXPECTED" ] && [ "$(wc -l < /tmp/pr_stability.csv)" -gt 1 ]; then
-            STABILITY_URL="${{ github.server_url }}/${{ github.repository }}/blob/ci-stability/STABILITY.md"
-            STABILITY_SECTION=$(awk -F, -v url="$STABILITY_URL" '
-              BEGIN {
-                printf "### 📈 Recent Stability ([full report](%s))\n", url
-                print ""
-                print "| Date | Commit | Pass | Fail | Flake | CF hits | Outcome | Duration |"
-                print "|------|--------|-----:|-----:|------:|--------:|:-------:|---------:|"
-              }
-              NR>1 && $1 !~ /^timestamp/ {
-                icon = ($10 == "success") ? "✅" : "❌"
-                ts = substr($1, 1, 10)
-                rows[NR] = sprintf("| %s | [`%s`](%s) | %s | %s | %s | %s | %s | %ss |", ts, $3, $12, $6, $7, $8, $9, icon, $11)
-              }
-              END {
-                # Print last 10 in reverse (newest first)
-                n = 0
-                for (i in rows) n++
-                count = (n > 10) ? 10 : n
-                start = NR - count + 1
-                for (i = NR; i >= start; i--) if (rows[i]) print rows[i]
-              }
-            ' /tmp/pr_stability.csv)
-          fi
-
-          # Heredoc without leading whitespace — GitHub markdown treats indented blocks as code
-          BODY=$(cat <<COMMENT
-          ## 🎭 Playwright Test Results
-
-          ${STATUS_ICON} **${STATUS_TEXT}**
-
-          | Metric | Count |
-          |--------|-------|
-          | Total  | ${{ steps.test-summary.outputs.total }} |
-          | ✅ Passed | ${{ steps.test-summary.outputs.passed }} |
-          | ❌ Failed | ${{ steps.test-summary.outputs.failed }} |
-          | 🔄 Flaky (passed on retry) | ${{ steps.test-summary.outputs.flaky }} |
-
-          **Retry Summary:** ${{ steps.test-summary.outputs.flaky_summary }}
-
-          **Commit:** \`${{ github.sha }}\`  ·  **Run:** [#${{ github.run_number }}](${RUN_URL})  ·  **Artifacts:** download from the run page
-
-          ${STABILITY_SECTION}
-
-          <details>
-          <summary>Known flaky causes we tag</summary>
-
-          When a test is flaky, we try to attribute it to one of these known root causes:
-
-          - ☁ **Cloudflare interstitial** — ParaBank's CF bot-challenge page blocked registration
-          - ⏱ **Other registration timeout** — Register response didn't render welcome or error in time (not CF-related)
-          - 🔁 **ParaBank double-collision** — 'username already exists' returned twice for unique UUIDs (server false-positive)
-          - ❓ **Unknown** — None of the above tags fired; download artifact and inspect \`trace.zip\` for root cause
-
-          This run: ☁ ${{ steps.test-summary.outputs.cf_hits }}  ·  ⏱ ${{ steps.test-summary.outputs.other_timeout_hits }}  ·  🔁 ${{ steps.test-summary.outputs.double_collision_hits }}
-          </details>
-
-          _HTML report deploys to [GitHub Pages](${{ env.REPORT_URL }}) only on main-branch runs. For PR runs, download the \`playwright-report\` artifact from the run page._
-          COMMENT
-          )
-
-          # Strip leading whitespace that HEREDOC preserves (YAML indentation)
-          BODY_CLEAN=$(echo "$BODY" | sed 's/^          //')
-
-          # Find any existing bot comment and either update it or create new
-          COMMENT_ID=$(gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
-            --jq '.[] | select(.user.login == "github-actions[bot]") | select(.body | contains("🎭 Playwright Test Results")) | .id' \
-            | head -1)
-
-          if [ -n "$COMMENT_ID" ]; then
-            gh api -X PATCH "repos/${{ github.repository }}/issues/comments/$COMMENT_ID" -f body="$BODY_CLEAN"
-            echo "Updated existing comment $COMMENT_ID"
-          else
-            gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" -f body="$BODY_CLEAN"
-            echo "Created new comment"
-          fi
-
-      - name: Append run to test-history.csv
-        if: always() && github.ref == 'refs/heads/main' && github.event_name == 'push'
-        run: |
-          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-          OUTCOME="${{ steps.test-run.outcome }}"
-          DURATION_SEC=$(grep -oE '\([0-9]+\.?[0-9]*[ms]+\)' playwright-output.txt | tail -1 | sed 's/[()]//g' | awk '/m/{split($0,a,"m"); print int(a[1])*60+int(a[2])} !/m/{sub(/s/,""); print int($0)}')
-          DURATION_SEC=${DURATION_SEC:-0}
-          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-
-          CSV_HEADER="timestamp,branch,commit_sha,actor,total,passed,failed,flaky,cf_hits,outcome,duration_sec,run_url"
-          ROW="${TIMESTAMP},${{ github.ref_name }},${SHORT_SHA},${{ github.actor }},${{ steps.test-summary.outputs.total }},${{ steps.test-summary.outputs.passed }},${{ steps.test-summary.outputs.failed }},${{ steps.test-summary.outputs.flaky }},${{ steps.test-summary.outputs.cf_hits }},${OUTCOME},${DURATION_SEC},${RUN_URL}"
-          echo "Appending: $ROW"
-
-          # Push to dedicated 'ci-stability' branch (main is protected and requires test check).
-          # Strategy: clone ci-stability, append the new row to its existing CSV, regenerate
-          # STABILITY.md from that MERGED history, push. Critical that we append to the
-          # existing branch's CSV — not to a fresh workspace one, which would wipe history.
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          STAB_DIR=$(mktemp -d)
-          AUTH_URL="https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
-
-          # Clone existing ci-stability, or init as orphan if branch doesn't exist yet
-          if git clone --depth 50 --branch ci-stability "$AUTH_URL" "$STAB_DIR/repo" 2>/dev/null; then
-            echo "Cloned existing ci-stability branch"
-          else
-            echo "Initializing ci-stability as orphan branch (first run)"
-            mkdir -p "$STAB_DIR/repo"
-            cd "$STAB_DIR/repo"
-            git init -b ci-stability
-            git remote add origin "$AUTH_URL"
-            cd - >/dev/null
-          fi
-
-          cd "$STAB_DIR/repo"
-
-          # Ensure CSV exists with the correct header; if missing or malformed, start fresh.
-          if [ ! -f test-history.csv ] || [ "$(head -n 1 test-history.csv)" != "$CSV_HEADER" ]; then
-            echo "$CSV_HEADER" > test-history.csv
-          fi
-
-          # APPEND the new row to the EXISTING (cloned) CSV. This preserves history.
-          echo "$ROW" >> test-history.csv
-
-          # Deduplicate just in case two concurrent main runs race to append the same SHA.
-          # Preserve header, sort+uniq the body, keep chronological order by timestamp.
-          (head -n 1 test-history.csv; tail -n +2 test-history.csv | sort -u -t, -k1,1) > test-history.dedup.csv
-          mv test-history.dedup.csv test-history.csv
-
-          # Regenerate STABILITY.md from the full merged history
-          python3 - <<'PY'
-          import csv
-
-          with open('test-history.csv') as f:
-              rows = list(csv.DictReader(f))
-
-          if not rows:
-              with open('STABILITY.md', 'w') as f:
-                  f.write('# Suite Stability\n\n_No runs yet._\n')
-              raise SystemExit(0)
-
-          recent = rows[-20:]
-
-          def pct(n, d):
-              return f'{100*n/d:.1f}%' if d else '—'
-
-          def as_int(v, default=0):
-              try:
-                  return int(v)
-              except (TypeError, ValueError):
-                  return default
-
-          recent_pass = sum(1 for r in recent if r['outcome'] == 'success')
-          flake_total = sum(as_int(r.get('flaky', 0)) for r in recent)
-          cf_total = sum(as_int(r.get('cf_hits', 0)) for r in recent)
-          tests_total = sum(as_int(r.get('total', 0)) for r in recent)
-          tests_passed = sum(as_int(r.get('passed', 0)) for r in recent)
-
-          lines = ['# Suite Stability\n']
-          lines.append(f'_Auto-generated from [test-history.csv](test-history.csv) — last {len(recent)} runs on `main`._\n')
-          lines.append('## Headline\n')
-          lines.append(f'- **Runs:** {recent_pass} / {len(recent)} succeeded ({pct(recent_pass, len(recent))})')
-          lines.append(f'- **Tests:** {tests_passed} / {tests_total} passed ({pct(tests_passed, tests_total)})')
-          lines.append(f'- **Flakes:** {flake_total} flaky tests across recent runs')
-          lines.append(f'- **Cloudflare interstitials:** {cf_total} total hits\n')
-          lines.append('## Recent runs\n')
-          lines.append('| Date | Commit | Pass | Fail | Flake | CF hits | Outcome | Duration |')
-          lines.append('|------|--------|-----:|-----:|------:|--------:|:-------:|---------:|')
-          for r in reversed(recent):
-              ts = (r.get('timestamp') or '')[:10]
-              sha = r.get('commit_sha', '')[:7]
-              run_url = r.get('run_url', '')
-              sha_link = f'[`{sha}`]({run_url})' if run_url else f'`{sha}`'
-              icon = '✅' if r.get('outcome') == 'success' else '❌'
-              lines.append(f"| {ts} | {sha_link} | {r.get('passed','')} | {r.get('failed','')} | {r.get('flaky','')} | {r.get('cf_hits','')} | {icon} | {r.get('duration_sec','')}s |")
-
-          with open('STABILITY.md', 'w') as f:
-              f.write('\n'.join(lines) + '\n')
-          print('STABILITY.md regenerated')
-          PY
-
-          git add test-history.csv STABILITY.md
-          git commit -m "ci: append run ${SHORT_SHA} to stability history" || { echo "No changes to commit"; exit 0; }
-          # Retry push once on race (concurrent main runs append simultaneously)
-          if ! git push origin ci-stability 2>/dev/null; then
-            echo "Push raced; pulling and re-applying"
-            git pull --rebase origin ci-stability || true
-            git push origin ci-stability || echo "Push still failed — data will be included next run"
-          fi
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          OUTCOME: ${{ steps.test-run.outcome }}
+          TOTAL: ${{ steps.test-summary.outputs.total }}
+          PASSED: ${{ steps.test-summary.outputs.passed }}
+          FAILED: ${{ steps.test-summary.outputs.failed }}
+          FLAKY: ${{ steps.test-summary.outputs.flaky }}
+          FLAKY_SUMMARY: ${{ steps.test-summary.outputs.flaky_summary }}
+          CF_HITS: ${{ steps.test-summary.outputs.cf_hits }}
+          OTHER_TIMEOUT_HITS: ${{ steps.test-summary.outputs.other_timeout_hits }}
+          DOUBLE_COLLISION_HITS: ${{ steps.test-summary.outputs.double_collision_hits }}
+          COMMIT: ${{ github.sha }}
+          REPORT_URL: ${{ env.REPORT_URL }}
+        run: node scripts/post-pr-comment.mjs
 
       - name: Upload Playwright report artifact
         uses: actions/upload-artifact@v4
@@ -420,13 +137,13 @@ jobs:
           retention-days: 7
 
       - name: Deploy report to GitHub Pages
-        if: always() && github.ref == 'refs/heads/main' && steps.test-run.outcome != 'skipped'
+        if: always() && github.event_name != 'repository_dispatch' && github.ref == 'refs/heads/main' && steps.test-run.outcome != 'skipped'
         uses: actions/upload-pages-artifact@v3
         with:
           path: playwright-report/
 
       - name: Publish to GitHub Pages
-        if: always() && github.ref == 'refs/heads/main' && steps.test-run.outcome != 'skipped'
+        if: always() && github.event_name != 'repository_dispatch' && github.ref == 'refs/heads/main' && steps.test-run.outcome != 'skipped'
         uses: actions/deploy-pages@v4
         id: deployment
 
@@ -477,6 +194,32 @@ jobs:
             <p><b>📊 View Full Report:</b> <a href="${{ env.REPORT_URL }}">Playwright HTML Report</a></p>
             <p><b>🔗 Actions Run:</b> <a href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}">View Pipeline</a></p>
             <p><b>📎 Artifacts:</b> <a href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}">Download screenshots, videos &amp; traces</a></p>
+
+      - name: Post final status to upstream
+        if: always() && github.event_name == 'repository_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.UPSTREAM_STATUS_PAT }}
+          SOURCE_REPO: ${{ github.event.client_payload.source_repo }}
+          SHA: ${{ github.event.client_payload.sha }}
+          OUTCOME: ${{ steps.test-run.outcome }}
+          TOTAL: ${{ steps.test-summary.outputs.total }}
+          PASSED: ${{ steps.test-summary.outputs.passed }}
+          FAILED: ${{ steps.test-summary.outputs.failed }}
+          FLAKY: ${{ steps.test-summary.outputs.flaky }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ "$OUTCOME" = "success" ]; then
+            STATE=success
+            DESC="E2E passed: $PASSED/$TOTAL ($FLAKY flaky)"
+          else
+            STATE=failure
+            DESC="E2E failed: $FAILED failed, $PASSED passed, $FLAKY flaky"
+          fi
+          gh api "repos/$SOURCE_REPO/statuses/$SHA" \
+            -f state="$STATE" \
+            -f context=parabank-e2e \
+            -f description="$DESC" \
+            -f target_url="$RUN_URL"
 
       - name: Fail pipeline if tests failed
         if: steps.test-run.outcome == 'failure'
