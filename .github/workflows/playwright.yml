@@ -222,20 +222,8 @@ jobs:
             -f description="$DESC" \
             -f target_url="$RUN_URL"
 
-      # Advisory on PRs, strict everywhere else.
-      # Rationale: ParaBank's live backend (Cloudflare + /accounts 500s) is
-      # outside our control and randomly breaks PR CI, which under branch
-      # protection blocks merges of changes unrelated to the test suite
-      # (refactors, docs, CI tweaks). PR runs still post red counts in the
-      # PR comment and set their own check status — this step just stops
-      # forcing exit 1 on PRs. Main/dispatch/manual runs stay strict.
       - name: Fail pipeline if tests failed
-        if: steps.test-run.outcome == 'failure' && github.event_name != 'pull_request'
+        if: steps.test-run.outcome == 'failure'
         run: |
           echo "❌ Tests failed — failing the pipeline."
           exit 1
-
-      - name: Flag PR test failures (advisory)
-        if: steps.test-run.outcome == 'failure' && github.event_name == 'pull_request'
-        run: |
-          echo "::warning::❌ ${{ steps.test-summary.outputs.failed }} test(s) failed on this PR — counts are in the PR comment. Treating as advisory (external flakiness policy)."
