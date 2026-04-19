@@ -2,12 +2,16 @@ name: Playwright E2E Tests
 
 on:
   push:
-    branches: ['*']
+    branches: [main]
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -88,6 +92,11 @@ jobs:
             else
               FLAKY_SUMMARY="No tests required retries. All tests passed on first attempt."
             fi
+
+            # CF-specific failure count — uses the [CLOUDFLARE] tagged warning from RegisterPage
+            # grep -c outputs '0' and exits 1 when no matches; '|| true' keeps us at exit 0 without duplicating output
+            CF_HITS=$(grep -cE '\[CLOUDFLARE\]' "$OUTPUT_FILE" || true)
+            CF_HITS=${CF_HITS:-0}
           else
             TOTAL=0
             PASSED=0
@@ -101,6 +110,7 @@ jobs:
           echo "passed=$PASSED" >> $GITHUB_OUTPUT
           echo "failed=$FAILED" >> $GITHUB_OUTPUT
           echo "flaky=$FLAKY" >> $GITHUB_OUTPUT
+          echo "cf_hits=$CF_HITS" >> $GITHUB_OUTPUT
           echo "flaky_summary=$FLAKY_SUMMARY" >> $GITHUB_OUTPUT
 
           # Use delimiter for multiline output
@@ -125,6 +135,7 @@ jobs:
           echo "| ✅ Passed | ${{ steps.test-summary.outputs.passed }} |" >> $GITHUB_STEP_SUMMARY
           echo "| ❌ Failed | ${{ steps.test-summary.outputs.failed }} |" >> $GITHUB_STEP_SUMMARY
           echo "| 🔄 Flaky (passed on retry) | ${{ steps.test-summary.outputs.flaky }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ☁ Cloudflare interstitials hit | ${{ steps.test-summary.outputs.cf_hits }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Detail | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
@@ -135,6 +146,34 @@ jobs:
           echo "**Retry Summary:** ${{ steps.test-summary.outputs.flaky_summary }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "📊 [View Full Report](${{ env.REPORT_URL }})" >> $GITHUB_STEP_SUMMARY
+
+      - name: Append run to test-history.csv
+        if: always() && github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: |
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          OUTCOME="${{ steps.test-run.outcome }}"
+          DURATION_SEC=$(grep -oE '\([0-9]+\.?[0-9]*[ms]+\)' playwright-output.txt | tail -1 | sed 's/[()]//g' | awk '/m/{split($0,a,"m"); print int(a[1])*60+int(a[2])} !/m/{sub(/s/,""); print int($0)}')
+          DURATION_SEC=${DURATION_SEC:-0}
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          ROW="${TIMESTAMP},${{ github.ref_name }},${SHORT_SHA},${{ github.actor }},${{ steps.test-summary.outputs.total }},${{ steps.test-summary.outputs.passed }},${{ steps.test-summary.outputs.failed }},${{ steps.test-summary.outputs.flaky }},${{ steps.test-summary.outputs.cf_hits }},${OUTCOME},${DURATION_SEC},${RUN_URL}"
+          echo "Appending: $ROW"
+
+          # Ensure header exists (first run, or file missing)
+          if [ ! -f test-history.csv ] || ! head -1 test-history.csv | grep -q 'timestamp,branch'; then
+            echo "timestamp,branch,commit_sha,actor,total,passed,failed,flaky,cf_hits,outcome,duration_sec,run_url" > test-history.csv
+          fi
+
+          echo "$ROW" >> test-history.csv
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Pull latest before committing to reduce race with concurrent main runs
+          git pull --rebase origin main || true
+          git add test-history.csv
+          git commit -m "ci: append run ${SHORT_SHA} to test-history.csv [skip ci]" || echo "No changes to commit"
+          git push origin main || echo "Push failed — likely raced with another run; non-fatal"
 
       - name: Upload Playwright report artifact
         uses: actions/upload-artifact@v4
