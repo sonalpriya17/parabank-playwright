@@ -15,10 +15,10 @@ const testDir = defineBddConfig({
 
 export default defineConfig({
   testDir,
-  fullyParallel: false,
+  fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: 3,
-  workers: 1,
+  workers: process.env.CI ? 2 : 3,
   timeout: 90_000,
   expect: { timeout: 10_000 },
 
