@@ -158,9 +158,6 @@ jobs:
           echo "| ✅ Passed | ${{ steps.test-summary.outputs.passed }} |" >> $GITHUB_STEP_SUMMARY
           echo "| ❌ Failed | ${{ steps.test-summary.outputs.failed }} |" >> $GITHUB_STEP_SUMMARY
           echo "| 🔄 Flaky (passed on retry) | ${{ steps.test-summary.outputs.flaky }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| ☁ Cloudflare interstitials hit | ${{ steps.test-summary.outputs.cf_hits }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| ⏱ Other registration timeouts | ${{ steps.test-summary.outputs.other_timeout_hits }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| 🔁 ParaBank double-collision (false-positive) | ${{ steps.test-summary.outputs.double_collision_hits }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Detail | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
@@ -171,6 +168,27 @@ jobs:
           echo "**Retry Summary:** ${{ steps.test-summary.outputs.flaky_summary }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "📊 [View Full Report](${{ env.REPORT_URL }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Stability snippet — renders recent-runs table from test-history.csv if present
+          # CSV columns: 1=timestamp 2=branch 3=sha 4=actor 5=total 6=passed 7=failed 8=flaky 9=cf_hits 10=outcome 11=duration 12=url
+          if [ -f test-history.csv ] && [ "$(wc -l < test-history.csv)" -gt 1 ]; then
+            {
+              echo "## 📈 Recent Stability (last runs on main)"
+              echo ""
+              echo "| Date | Commit | Pass | Fail | Flake | CF hits | Outcome | Duration |"
+              echo "|------|--------|-----:|-----:|------:|--------:|:-------:|---------:|"
+              tail -10 test-history.csv | awk -F, '
+                NR>0 && $1 !~ /^timestamp/ {
+                  icon = ($10 == "success") ? "✅" : "❌"
+                  ts = substr($1, 1, 10)
+                  printf "| %s | [`%s`](%s) | %s | %s | %s | %s | %s | %ss |\n", ts, $3, $12, $6, $7, $8, $9, icon, $11
+                }
+              '
+            } >> $GITHUB_STEP_SUMMARY
+          else
+            echo "_Recent stability data will appear after the first main-branch run appends to \`test-history.csv\`._" >> $GITHUB_STEP_SUMMARY
+          fi
 
       - name: Post test results comment on PR
         if: always() && github.event_name == 'pull_request'
@@ -183,6 +201,34 @@ jobs:
           if [ "${{ steps.test-run.outcome }}" != "success" ]; then
             STATUS_ICON="❌"
             STATUS_TEXT="Some tests failed"
+          fi
+
+          # Render recent-stability table (empty string if file missing)
+          STABILITY_SECTION=""
+          if [ -f test-history.csv ] && [ "$(wc -l < test-history.csv)" -gt 1 ]; then
+            STABILITY_SECTION=$(awk -F, '
+              BEGIN {
+                print "### 📈 Recent Stability (last runs on main)"
+                print ""
+                print "| Date | Commit | Pass | Fail | Flake | CF hits | Outcome | Duration |"
+                print "|------|--------|-----:|-----:|------:|--------:|:-------:|---------:|"
+              }
+              NR>1 && $1 !~ /^timestamp/ {
+                icon = ($10 == "success") ? "✅" : "❌"
+                ts = substr($1, 1, 10)
+                rows[NR] = sprintf("| %s | [`%s`](%s) | %s | %s | %s | %s | %s | %ss |", ts, $3, $12, $6, $7, $8, $9, icon, $11)
+              }
+              END {
+                # Print last 10 in reverse (newest first)
+                n = 0
+                for (i in rows) n++
+                count = (n > 10) ? 10 : n
+                start = NR - count + 1
+                for (i = NR; i >= start; i--) if (rows[i]) print rows[i]
+              }
+            ' test-history.csv)
+          else
+            STABILITY_SECTION="_Recent stability data will appear after the first main-branch run appends to \`test-history.csv\`._"
           fi
 
           # Heredoc without leading whitespace — GitHub markdown treats indented blocks as code
@@ -201,6 +247,8 @@ jobs:
           **Retry Summary:** ${{ steps.test-summary.outputs.flaky_summary }}
 
           **Commit:** \`${{ github.sha }}\`  ·  **Run:** [#${{ github.run_number }}](${RUN_URL})  ·  **Artifacts:** download from the run page
+
+          ${STABILITY_SECTION}
 
           <details>
           <summary>Known flaky causes we tag</summary>
