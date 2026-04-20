@@ -1,0 +1,49 @@
+# Copy this file to: sonalpriya17/fabric_assignment
+#   Path in that repo: .github/workflows/trigger-parabank-e2e.yml
+#
+# Triggers the parabank-playwright E2E suite on every push and every
+# pull-request commit in fabric_assignment. Uses workflow_dispatch so
+# the trigger can target ANY ref of parabank-playwright — including
+# unmerged feature branches (set TARGET_REF to e.g.
+# 'refactor/ci-extract-scripts' to run an unmerged PR's code).
+#
+# The receiver posts a commit status named "parabank-e2e" back onto
+# fabric_assignment's SHA, which shows up as a check on the PR and can
+# be set as a required check in branch protection.
+#
+# Required secret in fabric_assignment:
+#   E2E_TRIGGER_PAT — a fine-grained PAT with write access to
+#   sonalpriya17/parabank-playwright → Actions. GITHUB_TOKEN can't
+#   cross repos, which is why a PAT is needed here.
+
+name: Trigger ParaBank E2E
+
+on:
+  push:
+    branches-ignore: []
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+env:
+  # Ref of parabank-playwright to run. Set to 'main' for normal operation.
+  # Override to a feature branch when validating an unmerged parabank PR.
+  TARGET_REF: main
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger parabank-playwright workflow
+        uses: benc-uk/workflow-dispatch@v1
+        with:
+          token:    ${{ secrets.E2E_TRIGGER_PAT }}
+          repo:     sonalpriya17/parabank-playwright
+          workflow: Playwright E2E Tests
+          ref:      ${{ env.TARGET_REF }}
+          inputs: |
+            {
+              "reason":      "fabric push",
+              "source_repo": "${{ github.repository }}",
+              "sha":         "${{ github.event.pull_request.head.sha || github.sha }}",
+              "ref":         "${{ github.event.pull_request.head.ref || github.ref_name }}"
+            }
